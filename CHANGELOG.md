@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Automated Conditions 5e (AC5e) integration bridge.** When AC5e is active and an effect on the rolling actor carries an opt-in flag for the relevant roll hook, RSReforged now yields dialog control to AC5e rather than suppressing the configure dialog entirely. A new `AC5eBridge` utility class (`src/utils/ac5e.js`) centralises all interop: opt-in detection scans the message use-config, runtime usage rules, and actor active effects; roll context propagates `originatingMessage`, activity/item identity, target list, and the d20 state from a preceding attack roll into subsequent damage roll configs; and attack rolls are registered with dnd5e's message registry so AC5e can read them when computing damage bonuses. If AC5e intercepts an attack and returns no rolls (e.g. it applies a condition that cancels the action), RSReforged clears all pending render flags so no orphaned damage or formula rolls fire. The bridge is inert when AC5e is not installed or not active — no behaviour change for users without AC5e.
+
 ## [4.1.4] — 2026-05-06
 
 ### Fixed

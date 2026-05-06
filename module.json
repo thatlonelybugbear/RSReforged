@@ -68,8 +68,8 @@
 		]
 	},
 	"url": "https://github.com/arrowedisgaming/RSReforged",
-	"manifest": "https://raw.githubusercontent.com/arrowedisgaming/RSReforged/master/module.json",
-	"download": "https://github.com/arrowedisgaming/RSReforged/releases/download/release-4.1.4/rsreforged-release-4.1.4.zip",
+	"manifest": "https://raw.githubusercontent.com/arrowedisgaming/RSReforged/test/ac5e-bridge/module.json",
+	"download": "https://github.com/arrowedisgaming/RSReforged/archive/refs/heads/test/ac5e-bridge.zip",
 	"bugs": "https://github.com/arrowedisgaming/RSReforged/issues",
 	"readme": "https://github.com/arrowedisgaming/RSReforged/blob/master/README.md",
 	"media": [

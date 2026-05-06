@@ -1,5 +1,6 @@
 import { MODULE_SHORT } from "../module/const.js";
 import { MODULE_MIDI } from "../module/integration.js";
+import { AC5eBridge } from "./ac5e.js";
 import { ChatUtility } from "./chat.js";
 import { CoreUtility } from "./core.js";
 import { ROLL_TYPE } from "./roll.js";
@@ -139,6 +140,7 @@ export class ActivityUtility {
     static async runActivityActions(message) {
         let currentRolls = Array.from(message.flags[MODULE_SHORT]?.rolls || []);
         const newRolls = [];
+        let ac5eCancelledAction = false;
 
         if (message.flags[MODULE_SHORT].renderAttack) {
             const rawAttack = await ActivityUtility.getAttackFromMessage(message);
@@ -152,28 +154,41 @@ export class ActivityUtility {
                 message.flags[MODULE_SHORT].isCritical = message.flags[MODULE_SHORT].dual
                     ? false
                     : attackRolls[0].isCritical;
+                message.flags[MODULE_SHORT].rolls = currentRolls.map(r => r.toJSON ? r.toJSON() : r);
+                AC5eBridge.trackAttackRollsForDamage(message, attackRolls);
             } else {
                 message.flags[MODULE_SHORT].isCritical = false;
+                if (AC5eBridge.isActive) {
+                    ac5eCancelledAction = true;
+                    delete message.flags[MODULE_SHORT].renderAttack;
+                    delete message.flags[MODULE_SHORT].renderDamage;
+                    delete message.flags[MODULE_SHORT].renderFormula;
+                    delete message.flags[MODULE_SHORT].manualDamage;
+                }
             }
         }
 
-        if (message.flags[MODULE_SHORT].renderDamage) {
+        if (!ac5eCancelledAction && message.flags[MODULE_SHORT].renderDamage) {
             const rawDamage = await ActivityUtility.getDamageFromMessage(message);
             const damageRolls = ActivityUtility._extractRolls(rawDamage);
 
             if (damageRolls.length > 0) {
                 currentRolls = _injectRollsToArray(currentRolls, damageRolls, CONFIG.Dice.DamageRoll);
                 newRolls.push(...damageRolls);
+            } else if (AC5eBridge.isActive) {
+                delete message.flags[MODULE_SHORT].renderDamage;
             }
         }
 
-        if (message.flags[MODULE_SHORT].renderFormula) {
+        if (!ac5eCancelledAction && message.flags[MODULE_SHORT].renderFormula) {
             const rawFormula = await ActivityUtility.getFormulaFromMessage(message);
             const formulaRolls = ActivityUtility._extractRolls(rawFormula);
 
             if (formulaRolls.length > 0) {
                 currentRolls = _injectRollsToArray(currentRolls, formulaRolls, CONFIG.Dice.BasicRoll);
                 newRolls.push(...formulaRolls);
+            } else if (AC5eBridge.isActive) {
+                delete message.flags[MODULE_SHORT].renderFormula;
             }
         }
 
@@ -251,17 +266,17 @@ export class ActivityUtility {
     static getAttackFromMessage(message) {
         const activity = ActivityUtility._getActivityFromMessage(message);
         if (!activity || typeof activity.rollAttack !== "function") return null;
+        const ac5eContext = AC5eBridge.buildRollContext(message, activity, ROLL_TYPE.ATTACK);
 
         const config = {
             advantage:    message.flags[MODULE_SHORT].advantage    ?? false,
             disadvantage: message.flags[MODULE_SHORT].disadvantage ?? false,
-            ammunition:   message.flags[MODULE_SHORT].ammunition
+            ammunition:   message.flags[MODULE_SHORT].ammunition,
+            ...(ac5eContext.options ? { options: ac5eContext.options } : {})
         };
 
-        const dialogConfig  = { configure: false };
-        const messageConfig = { create: false, data: { flags: {} }, flags: {} };
-        messageConfig.data.flags[MODULE_SHORT] = { quickRoll: true };
-        messageConfig.flags[MODULE_SHORT]      = { quickRoll: true };
+        const dialogConfig  = { configure: AC5eBridge.shouldConfigureRoll(message, ROLL_TYPE.ATTACK) };
+        const messageConfig = ac5eContext.messageConfig ?? _createQuickRollMessageConfig();
 
         return activity.rollAttack(config, dialogConfig, messageConfig);
     }
@@ -293,6 +308,12 @@ export class ActivityUtility {
         const actor    = ActivityUtility._getActorFromMessage(message);
 
         if (!activity || !actor || typeof activity.rollDamage !== "function") return null;
+        const ac5eContext = AC5eBridge.buildRollContext(
+            message,
+            activity,
+            ROLL_TYPE.DAMAGE,
+            { d20: AC5eBridge.getD20StateFromMessage(message) }
+        );
 
         // Resolve scaling from system data (5.3.0 canonical) with flags fallback.
         const scaling = message.system?.scaling ?? message.flags?.dnd5e?.scaling ?? 0;
@@ -318,13 +339,12 @@ export class ActivityUtility {
             ...(scaling > 0 ? { scaling } : {}),
             midiOptions: CoreUtility.hasModule(MODULE_MIDI)
                 ? { isCritical: message.flags[MODULE_SHORT].isCritical ?? false }
-                : undefined
+                : undefined,
+            ...(ac5eContext.options ? { options: ac5eContext.options } : {})
         };
 
-        const dialogConfig  = { configure: false };
-        const messageConfig = { create: false, data: { flags: {} }, flags: {} };
-        messageConfig.data.flags[MODULE_SHORT] = { quickRoll: true };
-        messageConfig.flags[MODULE_SHORT]      = { quickRoll: true };
+        const dialogConfig  = { configure: AC5eBridge.shouldConfigureRoll(message, ROLL_TYPE.DAMAGE) };
+        const messageConfig = ac5eContext.messageConfig ?? _createQuickRollMessageConfig();
 
         return activity.rollDamage(config, dialogConfig, messageConfig);
     }
@@ -339,6 +359,7 @@ export class ActivityUtility {
     static getFormulaFromMessage(message) {
         const activity = ActivityUtility._getActivityFromMessage(message);
         if (!activity || typeof activity.rollFormula !== "function") return null;
+        const ac5eContext = AC5eBridge.buildRollContext(message, activity, ROLL_TYPE.FORMULA);
 
         const scaling = message.system?.scaling ?? message.flags?.dnd5e?.scaling ?? 0;
 
@@ -349,14 +370,22 @@ export class ActivityUtility {
 
         // See getDamageFromMessage for rationale — only pass scaling when > 0 so
         // cantrips fall through to rollData.scaling for auto-computation.
-        const config        = scaling > 0 ? { scaling } : {};
-        const dialogConfig  = { configure: false };
-        const messageConfig = { create: false, data: { flags: {} }, flags: {} };
-        messageConfig.data.flags[MODULE_SHORT] = { quickRoll: true };
-        messageConfig.flags[MODULE_SHORT]      = { quickRoll: true };
+        const config        = {
+            ...(scaling > 0 ? { scaling } : {}),
+            ...(ac5eContext.options ? { options: ac5eContext.options } : {})
+        };
+        const dialogConfig  = { configure: AC5eBridge.shouldConfigureRoll(message, ROLL_TYPE.FORMULA) };
+        const messageConfig = ac5eContext.messageConfig ?? _createQuickRollMessageConfig();
 
         return activity.rollFormula(config, dialogConfig, messageConfig);
     }
+}
+
+function _createQuickRollMessageConfig() {
+    const messageConfig = { create: false, data: { flags: {} }, flags: {} };
+    messageConfig.data.flags[MODULE_SHORT] = { quickRoll: true };
+    messageConfig.flags[MODULE_SHORT]      = { quickRoll: true };
+    return messageConfig;
 }
 
 /**

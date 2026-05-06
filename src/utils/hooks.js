@@ -1,6 +1,7 @@
 import { BonusManager } from "./bonus.js";
 import { RerollManager } from "./reroll.js";
 import { MODULE_SHORT, MODULE_TITLE } from "../module/const.js";
+import { AC5eBridge } from "./ac5e.js";
 import { ActivityUtility } from "./activity.js";
 import { ChatUtility } from "./chat.js";
 import { CoreUtility } from "./core.js";
@@ -118,7 +119,9 @@ export class HooksUtility {
                     roll.options.advantage ??= config.advantage;
                     roll.options.disadvantage ??= config.disadvantage;
                 }
-                dialog.configure = false;
+                if (!AC5eBridge.shouldConfigureRoll(message, ROLL_TYPE.ATTACK)) {
+                    dialog.configure = false;
+                }
                 return true;
             });
 
@@ -130,7 +133,9 @@ export class HooksUtility {
                     roll.options ??= {};
                     roll.options.isCritical ??= config.isCritical;
                 }
-                dialog.configure = false;
+                if (!AC5eBridge.shouldConfigureRoll(message, ROLL_TYPE.DAMAGE)) {
+                    dialog.configure = false;
+                }
                 return true;
             });
 
