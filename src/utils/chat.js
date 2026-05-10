@@ -378,23 +378,24 @@ async function _injectContent(message, type, html) {
     switch (type) {
         case ROLL_TYPE.DAMAGE:
             if (!message.flags?.dnd5e?.item?.id && !message.system?.item?.id) {
-                const enricher = html.find('.dice-roll');
-                
-                html.parent().find('.flavor-text').text('');
-                html.prepend('<div class="dnd5e2 chat-card"></div>');
-                html.find('.chat-card').append(enricher);                        
+                const useRsrDamageButtons = SettingsUtility.getSettingValue(SETTING_NAMES.DAMAGE_BUTTONS_ENABLED);
 
                 message.flags[MODULE_SHORT].renderDamage = true;
-                
+
                 const mRolls = ChatUtility.getMessageRolls(message);
                 message.flags[MODULE_SHORT].isCritical = mRolls[0]?.isCritical;
 
-                await _injectDamageRoll(message, enricher);
+                if (useRsrDamageButtons) {
+                    const enricher = html.find('.dice-roll');
+                    html.parent().find('.flavor-text').text('');
+                    html.prepend('<div class="dnd5e2 chat-card"></div>');
+                    html.find('.chat-card').append(enricher);
 
-                if (SettingsUtility.getSettingValue(SETTING_NAMES.DAMAGE_BUTTONS_ENABLED)) {                
+                    await _injectDamageRoll(message, enricher);
                     await _injectApplyDamageButtons(message, html);
+                    enricher.remove();
                 }
-                enricher.remove();
+
                 break;
             }
             // falls through to ATTACK when item id is present
@@ -463,15 +464,27 @@ async function _injectContent(message, type, html) {
                 await _injectBreakConcentrationButton(message, html)
             }
             break;
-        case ROLL_TYPE.ACTIVITY:
+        case ROLL_TYPE.ACTIVITY: {
             if (!message.isContentVisible) return;
+            const useRsrDamageButtons = SettingsUtility.getSettingValue(SETTING_NAMES.DAMAGE_BUTTONS_ENABLED);
 
             let actions = html.find('.card-buttons');
             if (actions.length === 0) actions = html.find('.card-activities');
             if (actions.length === 0) actions = html.find('.dnd5e2.chat-card');
             if (actions.length === 0) actions = html;
-            
-            html.find('.dice-roll').remove();
+
+            // Strip pre-existing dice-roll DOM and the (now-empty) non-usage
+            // chat-card wrappers that contained them, before we inject our own
+            // render. Applies to both RSR and native modes — otherwise the
+            // message ends up with duplicate damage UIs (RSR) or empty card
+            // shells next to the new native damage card (native).
+            if (useRsrDamageButtons
+                || message.flags[MODULE_SHORT].renderAttack
+                || message.flags[MODULE_SHORT].renderFormula
+                || message.flags[MODULE_SHORT].renderDamage) {
+                html.find('.dice-roll').remove();
+                html.find('.dnd5e2.chat-card').not('.activation-card, .usage-card').remove();
+            }
 
             if (message.flags[MODULE_SHORT].renderAttack || message.flags[MODULE_SHORT].renderAttack === false) {
                 html.find('[data-action=rollAttack], [data-action=attack]').remove();
@@ -480,7 +493,7 @@ async function _injectContent(message, type, html) {
                 html.find('.rsr-section-attack').append(html.find('.supplement'));
                 html.find('.supplement').removeClass('supplement').addClass('rsr-supplement');
             }
-            
+
             if (message.flags[MODULE_SHORT].manualDamage || message.flags[MODULE_SHORT].renderDamage) {
                 html.find('[data-action=rollDamage], [data-action=damage]').remove();
                 html.find('[data-action=rollHealing], [data-action=heal]').remove();
@@ -491,7 +504,7 @@ async function _injectContent(message, type, html) {
             }
 
             if (message.flags[MODULE_SHORT].renderDamage) {
-                await _injectDamageRoll(message, actions);
+                await _injectDamageRoll(message, actions, { mode: useRsrDamageButtons ? "rsr" : "native" });
             }
 
             if (message.flags[MODULE_SHORT].renderFormula) {
@@ -499,14 +512,13 @@ async function _injectContent(message, type, html) {
                 await _injectFormulaRoll(message, actions);
             }
 
-            if (SettingsUtility.getSettingValue(SETTING_NAMES.DAMAGE_BUTTONS_ENABLED)) {
+            if (useRsrDamageButtons) {
                 await _injectApplyDamageButtons(message, html);
+                const rootParent = html.closest('.message-content');
+                if (rootParent.length) rootParent.find('> .dice-roll').remove();
             }
-
-            html.find('.dnd5e2.chat-card').not('.activation-card, .usage-card').remove();
-            const rootParent = html.closest('.message-content');
-            if (rootParent.length) rootParent.find('> .dice-roll').remove(); 
             break;
+        }
         default:
             break;
     }
@@ -590,7 +602,7 @@ async function _injectFormulaRoll(message, html) {
     _safeInsert(sectionHTML, html);
 }
 
-async function _injectDamageRoll(message, html) {
+async function _injectDamageRoll(message, html, { mode = "rsr" } = {}) {
     const ChatMessage5e = CONFIG.ChatMessage.documentClass;
     const rolls = ChatUtility.getMessageRolls(message).filter(r => r instanceof CONFIG.Dice.DamageRoll || r.class === "DamageRoll" || r.constructor?.name === "DamageRoll");
 
@@ -599,7 +611,19 @@ async function _injectDamageRoll(message, html) {
     const chatData = await CONFIG.Dice.DamageRoll.toMessage(rolls, {}, { create: false });
     // Foundry V14: see comment in _injectAttackRoll. type:"roll" is set by toMessage().
 
-    const rollHTML = $(await new ChatMessage5e(chatData).renderHTML()).find('.dice-roll');
+    const renderedHTML = $(await new ChatMessage5e(chatData).renderHTML());
+
+    if (mode === "native") {
+        let nativeHTML = renderedHTML.find('.message-content').children();
+        if (!nativeHTML.length) nativeHTML = renderedHTML.find('.dnd5e2.chat-card').not('.activation-card, .usage-card');
+        if (!nativeHTML.length) nativeHTML = renderedHTML.find('.dice-roll').closest('.dnd5e2.chat-card');
+        if (!nativeHTML.length) nativeHTML = renderedHTML.find('.dice-roll');
+
+        _safeInsert(nativeHTML, html);
+        return;
+    }
+
+    const rollHTML = renderedHTML.find('.dice-roll');
     rollHTML.find('.dice-tooltip').prepend(rollHTML.find('.dice-formula'));
     rollHTML.find('.dice-result').addClass('rsr-damage');
 

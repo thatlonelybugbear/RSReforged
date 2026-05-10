@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.1.5] — 2026-05-10
+
+### Fixed
+- **Native damage UI now renders correctly when *Enable Apply Damage Buttons* is disabled.** With the setting off, activity rolls that produced damage rendered both the original Foundry `.dice-roll` DOM and a freshly injected native dnd5e damage card, leaving two damage UIs stacked in the same chat message; in some cases an empty `.dnd5e2.chat-card` wrapper was also left behind after the inner dice-roll was stripped. `_injectDamageRoll` now accepts a `mode` parameter (`"rsr" | "native"`) so the activity render path can request the native dnd5e damage card when RSR's custom UI is opted out, and the activity-card cleanup in `_injectContent` now strips the pre-existing dice-roll *and* its non-usage chat-card wrapper before injecting either render — so the message ends up with exactly one damage UI in either mode.
+
 ## [4.1.4] — 2026-05-06
 
 ### Fixed
