@@ -8,6 +8,12 @@
 ![License](https://img.shields.io/badge/license-GPL--3.0-green?style=for-the-badge)
 
 <p align="center">
+  <a href="https://ko-fi.com/arrowedisgaming">
+    <img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Support me on Ko-fi">
+  </a>
+</p>
+
+<p align="center">
   <img src="https://raw.githubusercontent.com/arrowedisgaming/RSReforged/master/assets/screenshots/npc-quick-roll-overview.png"
        alt="NPC sheet alongside an RSReforged quick-roll chat card showing an attack, damage by type, and per-damage apply buttons"
        width="100%">
