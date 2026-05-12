@@ -30,7 +30,9 @@ export const SETTING_NAMES = {
     // Interactive dice (added in 4.0.0)
     REROLL_EVERYONE: "rerollEveryone",
     REROLL_PLAYERS: "rerollPlayers",
-    FUDGE_GM: "fudgeGM"
+    FUDGE_GM: "fudgeGM",
+    REROLL_SOUND_ENABLED: "rerollSoundEnabled",
+    REROLL_LOG_CHAT: "rerollLogChat"
 }
 
 export const DAMAGE_APPLY_MODES = {
@@ -168,9 +170,11 @@ export class SettingsUtility {
 
         // INTERACTIVE DICE OPTIONS (4.0.0+)
         const interactiveDiceOptions = [
-            { name: SETTING_NAMES.REROLL_EVERYONE, default: true },
-            { name: SETTING_NAMES.REROLL_PLAYERS,  default: false },
-            { name: SETTING_NAMES.FUDGE_GM,        default: false }
+            { name: SETTING_NAMES.REROLL_EVERYONE,      default: true },
+            { name: SETTING_NAMES.REROLL_PLAYERS,       default: false },
+            { name: SETTING_NAMES.FUDGE_GM,             default: false },
+            { name: SETTING_NAMES.REROLL_SOUND_ENABLED, default: true },
+            { name: SETTING_NAMES.REROLL_LOG_CHAT,      default: true }
         ];
 
         interactiveDiceOptions.forEach(option => {

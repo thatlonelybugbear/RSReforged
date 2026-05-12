@@ -83,14 +83,16 @@
 <h3>Clickable dice in chat</h3>
 <p>With this feature enabled, you can click any die shown in a chat tooltip:</p>
 <ul>
-<li><strong>Left-click</strong> a die in a roll you made to reroll that die in place. The chat card recalculates.</li>
-<li><strong>Right-click</strong> a die (GM only, when <em>Allow GM Dice Fudging</em> is on) to set its value via a prompt. Useful for narrative course-correction.</li>
+<li><strong>Left-click</strong> a die in a roll you made to reroll that die in place. The chat card recalculates. If Dice So Nice is installed, the rerolled die is animated in 3D; otherwise the configured dice sound plays as a fallback. A public chat message logs the reroll (e.g. <em>&quot;Alice rerolled a d20: 7 → 14&quot;</em>), respecting the current roll mode.</li>
+<li><strong>Right-click</strong> a die (GM only, when <em>Allow GM Dice Fudging</em> is on) to set its value via a prompt. Useful for narrative course-correction. Fudging is intentionally silent.</li>
 </ul>
-<p>Three settings gate the feature:</p>
+<p>Settings that gate the feature:</p>
 <ul>
 <li><strong>Enable Interactive Dice (Master Switch)</strong> — kill switch for the whole feature</li>
 <li><strong>Allow Players to Reroll Their Own Dice</strong> — players can left-click their own dice</li>
 <li><strong>Allow GM Dice Fudging</strong> — GM gets the right-click &quot;set value&quot; option</li>
+<li><strong>Reroll Sound &amp; Dice So Nice</strong> — play sound + animate rerolled die in 3D when Dice So Nice is installed</li>
+<li><strong>Log Rerolls to Chat</strong> — post a public chat message announcing each reroll</li>
 </ul>
 <h2>Configuration</h2>
 <p>All settings live under <em>Configure Settings → Module Settings → RSReforged</em>. The ones worth knowing:</p>

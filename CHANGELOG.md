@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.3.0] — 2026-05-12
+
+### Added
+- **Reroll feedback: sound, Dice So Nice animation, and public chat log.** Left-clicking a die to reroll it was previously silent — only the clicker saw a `ui.notifications` toast, and the rest of the table had no audio or visual indication. `_handleReroll` now (1) routes the freshly evaluated `1d{faces}` Roll through the existing `CoreUtility.tryRollDice3D` so Dice So Nice animates the single rerolled die in 3D when installed, falling back to `CoreUtility.playRollSound` when DSN is absent, and (2) posts a `ChatMessage` reading *"{user} rerolled a d{faces}: {old} → {new}"*, sourcing whisper/blind/rollMode from `CoreUtility.getWhisperData` so the log respects the current roll mode (public/whisper/blind/self). The toast is preserved as a low-noise local confirmation. GM fudging (right-click) remains silent by design.
+- **Two opt-out settings under *Interactive Dice*.** *Reroll Sound & Dice So Nice* and *Log Rerolls to Chat*, both default-on. Disabling the sound setting suppresses both DSN and the audio fallback; disabling the log setting suppresses only the chat message. The reroll itself and its `ui.notifications` confirmation still work with both off.
+
 ## [4.2.0] — 2026-05-11
 
 ### Added

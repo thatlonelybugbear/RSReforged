@@ -100,14 +100,16 @@ See [Setting up pre-defined bonuses](#setting-up-pre-defined-bonuses) below for 
 
 With this feature enabled, you can click any die shown in a chat tooltip:
 
-- **Left-click** a die in a roll you made to reroll that die in place. The chat card recalculates.
-- **Right-click** a die (GM only, when *Allow GM Dice Fudging* is on) to set its value via a prompt. Useful for narrative course-correction.
+- **Left-click** a die in a roll you made to reroll that die in place. The chat card recalculates. If Dice So Nice is installed, the rerolled die is animated in 3D; otherwise the configured dice sound plays as a fallback. A public chat message logs the reroll (e.g. *"Alice rerolled a d20: 7 → 14"*), respecting the current roll mode.
+- **Right-click** a die (GM only, when *Allow GM Dice Fudging* is on) to set its value via a prompt. Useful for narrative course-correction. Fudging is intentionally silent.
 
-Three settings gate the feature:
+Settings that gate the feature:
 
 - **Enable Interactive Dice (Master Switch)** — kill switch for the whole feature
 - **Allow Players to Reroll Their Own Dice** — players can left-click their own dice
 - **Allow GM Dice Fudging** — GM gets the right-click "set value" option
+- **Reroll Sound & Dice So Nice** — play sound + animate rerolled die in 3D when Dice So Nice is installed
+- **Log Rerolls to Chat** — post a public chat message announcing each reroll
 
 ## Configuration
 

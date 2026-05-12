@@ -1,5 +1,6 @@
 import { MODULE_SHORT } from "../module/const.js";
 import { ChatUtility } from "./chat.js";
+import { CoreUtility } from "./core.js";
 import { LogUtility } from "./log.js";
 import { SETTING_NAMES, SettingsUtility } from "./settings.js";
 
@@ -52,15 +53,56 @@ export class RerollManager {
             return;
         }
 
-        const newDieRoll = await new Roll(`1d${targetTerm.faces}`).evaluate();
+        const oldResult = targetTerm.results[resultIndex].result;
+        const faces = targetTerm.faces;
+
+        const newDieRoll = await new Roll(`1d${faces}`).evaluate();
         const newResult = newDieRoll.dice[0].results[0];
-        
+
         targetTerm.results[resultIndex].result = newResult.result;
         this._recalculateModifiers(targetTerm);
         targetRoll._total = targetRoll._evaluateTotal();
 
         _persistRolls(message, rolls);
-        ui.notifications.info(`Rerolled die: New result is ${newResult.result}`);
+
+        await this._announceReroll(message, newDieRoll, { faces, oldResult, newResult: newResult.result });
+    }
+
+    /**
+     * Provide audio/visual feedback and public logging for a reroll.
+     * Honors the REROLL_SOUND_ENABLED and REROLL_LOG_CHAT settings, and falls
+     * back from Dice So Nice to the configured dice sound when DSN is absent.
+     */
+    static async _announceReroll(message, newDieRoll, { faces, oldResult, newResult }) {
+        const localize = (key, data) => CoreUtility.localize(`${MODULE_SHORT}.chat.reroll.${key}`, data);
+
+        if (SettingsUtility.getSettingValue(SETTING_NAMES.REROLL_SOUND_ENABLED)) {
+            const playedDsn = await CoreUtility.tryRollDice3D(newDieRoll, message?.id ?? null);
+            if (!playedDsn) {
+                CoreUtility.playRollSound();
+            }
+        }
+
+        if (SettingsUtility.getSettingValue(SETTING_NAMES.REROLL_LOG_CHAT)) {
+            const { rollMode, whisper, blind } = CoreUtility.getWhisperData();
+            // Escape the user's display name before interpolating into HTML — Foundry user names
+            // allow characters that would otherwise render as markup in the chat message.
+            const safeUser = foundry.utils.escapeHTML(game.user.name);
+            const content = localize("log", { user: safeUser, faces, old: oldResult, new: newResult });
+
+            await ChatMessage.create({
+                user: game.user.id,
+                speaker: ChatMessage.getSpeaker({ user: game.user }),
+                flavor: localize("flavor"),
+                content,
+                whisper,
+                blind: blind ?? false,
+                rollMode,
+                flags: { [MODULE_SHORT]: { rerollLog: true } }
+            });
+        }
+
+        ui.notifications.info(localize("notification", { new: newResult }));
     }
 
     static async _handleFudge(message, dieElement) {
