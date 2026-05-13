@@ -74,7 +74,7 @@ Click *Install*. Foundry downloads the latest release and adds RSReforged to you
 
 ### Quick rolls
 
-Skill checks, ability checks, saving throws, tool checks, and item activities all roll straight to chat without the standard dnd5e dialog. Each category can be toggled independently in the module settings. The dnd5e *Skip Dialog* modifier still bypasses RSReforged when you want the full dialog for a one-off roll.
+Skill checks, ability checks, saving throws, tool checks, and item activities all roll straight to chat without the standard dnd5e dialog. Each category can be toggled independently in the module settings, or disable everything in one place with the *Use Vanilla Rolls with RSReforged Styling* master switch at the top — when that's on, dnd5e's normal roll dialogs are used everywhere and the per-category toggles are ignored. Hold the dnd5e *Skip Dialog* modifier (Shift by default) to invert RSReforged's quick-roll default and use the normal dnd5e dialog for one roll.
 
 Hold the *Advantage* or *Disadvantage* modifier while clicking to roll in that mode, including any extra dice from features like Elven Accuracy. The chat card highlights the kept die.
 

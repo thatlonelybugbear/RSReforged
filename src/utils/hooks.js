@@ -53,108 +53,114 @@ export class HooksUtility {
     static registerRollHooks() {
         LogUtility.log("Registering roll hooks");
 
-        if (SettingsUtility.getSettingValue(SETTING_NAMES.QUICK_ABILITY_ENABLED)) {
-            Hooks.on(HOOKS_DND5E.PRE_ROLL_ABILITY_CHECK, (config, dialog, message) => {
+        Hooks.on(HOOKS_DND5E.PRE_ROLL_ABILITY_CHECK, (config, dialog, message) => {
+            // dnd5e 5.3 fires preRollAbilityCheckV2 for skill and tool checks too
+            // (their hookNames chain is [type, "abilityCheck", "d20Test"]). Defer to
+            // PRE_ROLL_SKILL / PRE_ROLL_TOOL_CHECK so each category's setting controls
+            // its own roll path instead of QUICK_ABILITY_ENABLED hijacking them.
+            if (config.hookNames?.some(n => n === "skill" || n === "tool")) return true;
+
+            if (SettingsUtility.getSettingValue(SETTING_NAMES.QUICK_ABILITY_ENABLED)) {
                 RollUtility.processRoll(config, dialog, message);
-                return true;
-            });
-            Hooks.on(HOOKS_DND5E.PRE_ROLL_SAVING_THROW, (config, dialog, message) => {
+            }
+            return true;
+        });
+        Hooks.on(HOOKS_DND5E.PRE_ROLL_SAVING_THROW, (config, dialog, message) => {
+            if (SettingsUtility.getSettingValue(SETTING_NAMES.QUICK_ABILITY_ENABLED)) {
                 RollUtility.processRoll(config, dialog, message);
-                return true;
-            });
-        }
+            }
+            return true;
+        });
 
-        if (SettingsUtility.getSettingValue(SETTING_NAMES.QUICK_SKILL_ENABLED)) {
-            Hooks.on(HOOKS_DND5E.PRE_ROLL_SKILL, (config, dialog, message) => {
+        Hooks.on(HOOKS_DND5E.PRE_ROLL_SKILL, (config, dialog, message) => {
+            if (SettingsUtility.getSettingValue(SETTING_NAMES.QUICK_SKILL_ENABLED)) {
                 RollUtility.processRoll(config, dialog, message);
-                return true;
-            });
-        }
+            }
+            return true;
+        });
 
-        if (SettingsUtility.getSettingValue(SETTING_NAMES.QUICK_TOOL_ENABLED)) {
-            Hooks.on(HOOKS_DND5E.PRE_ROLL_TOOL_CHECK, (config, dialog, message) => {
+        Hooks.on(HOOKS_DND5E.PRE_ROLL_TOOL_CHECK, (config, dialog, message) => {
+            if (SettingsUtility.getSettingValue(SETTING_NAMES.QUICK_TOOL_ENABLED)) {
                 RollUtility.processRoll(config, dialog, message);
-                return true;
-            });
-        }
+            }
+            return true;
+        });
 
-        if (SettingsUtility.getSettingValue(SETTING_NAMES.QUICK_ACTIVITY_ENABLED)) {
-            // dnd5e 5.3.0: Set subsequentActions = false to prevent the system from
-            // auto-triggering attack/damage rolls after item use. RSR handles those itself
-            // via preCreateChatMessage + ActivityUtility.runActivityActions(). This replaces
-            // the old setTimeout/postUseActivity hack that returned false to block auto-rolls,
-            // which broke entirely in 5.3.0 because postUseActivity now only gates the
-            // _triggerSubsequentActions call (line 16848 in dnd5e.mjs), not message creation.
-            Hooks.on(HOOKS_DND5E.PRE_USE_ACTIVITY, (activity, usageConfig, dialogConfig, messageConfig) => {
-                if (!SettingsUtility.getSettingValue(SETTING_NAMES.QUICK_VANILLA_ENABLED)) {
-                    // Preserve dnd5e's usage-configuration dialog for *leveled* spells so
-                    // the player can select an upcast slot; the dialog writes the chosen
-                    // upcast delta to message.system.scaling, which ActivityUtility then
-                    // passes to rollDamage. Cantrips skip the dialog — they have no slot
-                    // choice and ActivityUtility falls through to rollData.scaling, which
-                    // SpellData#scalingIncrease auto-computes from actor.cantripLevel.
-                    // Also preserve it for OrderActivity (bastion facility orders):
-                    // OrderUsageDialog is the only path that populates usageConfig.costs /
-                    // craft / trade, OrderActivity._prepareUsageScaling writes those
-                    // straight into the message flags, and _usageChatContext destructures
-                    // costs.days unconditionally — skipping the dialog leaves costs
-                    // undefined and crashes order resolution.
-                    const isLeveledSpell = activity?.item?.type === "spell"
-                        && (activity.item.system?.level ?? 0) > 0;
-                    const isOrderActivity = activity?.type === "order";
-                    if (!isLeveledSpell && !isOrderActivity) {
-                        dialogConfig.configure = false;
-                    }
-                    usageConfig.subsequentActions = false;
-                }
-                return true;
-            });
+        // dnd5e 5.3.0: processActivity sets usageConfig.subsequentActions = false on the
+        // quick-roll path to prevent the system from auto-triggering attack/damage rolls
+        // after item use — RSR drives those itself via preCreateChatMessage +
+        // ActivityUtility.runActivityActions(). Slow-roll (shift-click) leaves
+        // subsequentActions alone so dnd5e's _triggerSubsequentActions can fire the
+        // follow-up rolls after the usage dialog closes.
+        Hooks.on(HOOKS_DND5E.PRE_USE_ACTIVITY, (activity, usageConfig, dialogConfig, messageConfig) => {
+            if (
+                SettingsUtility.getSettingValue(SETTING_NAMES.QUICK_ACTIVITY_ENABLED)
+                && !SettingsUtility.getSettingValue(SETTING_NAMES.QUICK_VANILLA_ENABLED)
+            ) {
+                RollUtility.processActivity(activity, usageConfig, dialogConfig, messageConfig);
+            }
+            return true;
+        });
 
-            Hooks.on(HOOKS_DND5E.PRE_ROLL_ATTACK, (config, dialog, message) => {
-                const flags = message?.flags || message?.data?.flags;
-                if (!flags || !flags[MODULE_SHORT]?.quickRoll) return true;
+        Hooks.on(HOOKS_DND5E.PRE_ROLL_ATTACK, (config, dialog, message) => {
+            if (
+                !SettingsUtility.getSettingValue(SETTING_NAMES.QUICK_ACTIVITY_ENABLED)
+                || SettingsUtility.getSettingValue(SETTING_NAMES.QUICK_VANILLA_ENABLED)
+            ) return true;
 
-                for (const roll of config.rolls) {
-                    roll.options.advantage ??= config.advantage;
-                    roll.options.disadvantage ??= config.disadvantage;
-                }
-                dialog.configure = false;
-                return true;
-            });
+            const flags = message?.flags || message?.data?.flags;
+            if (!flags || !flags[MODULE_SHORT]?.quickRoll) return true;
 
-            Hooks.on(HOOKS_DND5E.PRE_ROLL_DAMAGE, (config, dialog, message) => {
-                const flags = message?.flags || message?.data?.flags;
-                if (!flags || !flags[MODULE_SHORT]?.quickRoll) return true;
+            for (const roll of config.rolls) {
+                roll.options.advantage ??= config.advantage;
+                roll.options.disadvantage ??= config.disadvantage;
+            }
+            dialog.configure = false;
+            return true;
+        });
 
-                for (const roll of config.rolls) {
-                    roll.options ??= {};
-                    roll.options.isCritical ??= config.isCritical;
-                }
-                dialog.configure = false;
-                return true;
-            });
+        Hooks.on(HOOKS_DND5E.PRE_ROLL_DAMAGE, (config, dialog, message) => {
+            if (
+                !SettingsUtility.getSettingValue(SETTING_NAMES.QUICK_ACTIVITY_ENABLED)
+                || SettingsUtility.getSettingValue(SETTING_NAMES.QUICK_VANILLA_ENABLED)
+            ) return true;
 
-            // dnd5e 5.3.0: ActivityUsageUpdates always uses `updates.item` (an array of
-            // { _id, ...dotNotationProperties } objects). The `updates.items` key from older
-            // versions no longer exists and has been removed from this hook.
-            Hooks.on(HOOKS_DND5E.ACTIVITY_CONSUMPTION, (activity, usageConfig, messageConfig, updates) => {
-                const hasAttack = activity.type === "attack" || !!activity.attack || activity.hasOwnProperty(ROLL_TYPE.ATTACK);
-                const items = updates.item;
+            const flags = message?.flags || message?.data?.flags;
+            if (!flags || !flags[MODULE_SHORT]?.quickRoll) return true;
 
-                if (hasAttack && items && items.length > 0) {
-                    const ammo = items.find(i => i["system.quantity"] !== undefined || i["system.uses.spent"] !== undefined);
-                    if (!ammo) return;
+            for (const roll of config.rolls) {
+                roll.options ??= {};
+                roll.options.isCritical ??= config.isCritical;
+            }
+            dialog.configure = false;
+            return true;
+        });
 
-                    messageConfig.flags ??= {};
-                    messageConfig.flags[MODULE_SHORT] ??= {};
-                    messageConfig.flags[MODULE_SHORT].ammunition = ammo._id;
+        // dnd5e 5.3.0: ActivityUsageUpdates always uses `updates.item` (an array of
+        // { _id, ...dotNotationProperties } objects). The `updates.items` key from older
+        // versions no longer exists and has been removed from this hook.
+        Hooks.on(HOOKS_DND5E.ACTIVITY_CONSUMPTION, (activity, usageConfig, messageConfig, updates) => {
+            if (
+                !SettingsUtility.getSettingValue(SETTING_NAMES.QUICK_ACTIVITY_ENABLED)
+                || SettingsUtility.getSettingValue(SETTING_NAMES.QUICK_VANILLA_ENABLED)
+            ) return;
 
-                    // Temporarily restore the quantity so the attack roll can access live ammo
-                    // data. The system will apply its own decrement after consumption.
-                    if (ammo["system.quantity"] !== undefined) ammo["system.quantity"]++;
-                }
-            });
-        }
+            const hasAttack = activity.type === "attack" || !!activity.attack || activity.hasOwnProperty(ROLL_TYPE.ATTACK);
+            const items = updates.item;
+
+            if (hasAttack && items && items.length > 0) {
+                const ammo = items.find(i => i["system.quantity"] !== undefined || i["system.uses.spent"] !== undefined);
+                if (!ammo) return;
+
+                messageConfig.flags ??= {};
+                messageConfig.flags[MODULE_SHORT] ??= {};
+                messageConfig.flags[MODULE_SHORT].ammunition = ammo._id;
+
+                // Temporarily restore the quantity so the attack roll can access live ammo
+                // data. The system will apply its own decrement after consumption.
+                if (ammo["system.quantity"] !== undefined) ammo["system.quantity"]++;
+            }
+        });
     }
 
     static registerChatHooks() {
@@ -204,13 +210,13 @@ export class HooksUtility {
                 const quickVanilla = SettingsUtility.getSettingValue(SETTING_NAMES.QUICK_VANILLA_ENABLED);
                 if (quickVanilla) return;
 
-                const flags = message.flags[MODULE_SHORT] || {};
-                flags.quickRoll = true;
-                flags.processed = false;
+                const flags = { ...(message.flags?.[MODULE_SHORT] || {}) };
+                flags.quickRoll ??= true;
+                flags.processed ??= false;
 
                 const activity = ActivityUtility._getActivityFromMessage(message);
 
-                if (activity) {
+                if (flags.quickRoll && activity) {
                     const hasAttack = activity.type === "attack" || !!activity.attack || activity.hasOwnProperty("attack");
                     const hasDamage = activity.type === "damage" || !!activity.damage || activity.type === "attack" || activity.type === "save" || activity.hasOwnProperty("damage");
                     const hasHealing = activity.type === "heal" || !!activity.healing || activity.hasOwnProperty("healing");
@@ -234,7 +240,9 @@ export class HooksUtility {
                         const fName = activity.roll?.name || activity.formula?.name;
                         if (fName && fName !== "") flags.formulaName = fName;
                     }
-                } else {
+                } else if (flags.quickRoll) {
+                    // Slow-roll messages are driven by dnd5e's dialog path; only quick-roll
+                    // messages need an immediately resolvable activity for RSR rendering.
                     LogUtility.logError("Could not resolve activity during preCreate.");
                 }
 

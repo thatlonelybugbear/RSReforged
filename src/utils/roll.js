@@ -51,20 +51,17 @@ export class RollUtility {
     static processRoll(config, dialog, message) {
         if (message.data.flags[MODULE_SHORT]?.processed) return;
 
-        const keys = {
-            normal: CoreUtility.areKeysPressed(config.event, "skipDialogNormal"),
-            advantage: CoreUtility.areKeysPressed(config.event, "skipDialogAdvantage"),
-            disadvantage: CoreUtility.areKeysPressed(config.event, "skipDialogDisadvantage")
-        };
+        const keys = _readSkipDialogKeys(config.event);
+        const vanillaWorkflow = SettingsUtility.getSettingValue(SETTING_NAMES.QUICK_VANILLA_ENABLED);
 
-        dialog.configure ??= keys.normal || (config.vanilla ?? false);
+        dialog.configure = vanillaWorkflow || keys.normal || (config.vanilla ?? false);
 
         if (config.isConcentration) {
             config.flavor = `${CoreUtility.localize("DND5E.ToolPromptTitle", { tool: CoreUtility.localize("DND5E.Concentration") })}`;
         }
 
         message.data.flags[MODULE_SHORT] = { 
-            quickRoll: SettingsUtility.getSettingValue(SETTING_NAMES.QUICK_VANILLA_ENABLED) || !(dialog.configure ?? true),
+            quickRoll: vanillaWorkflow || !dialog.configure,
             advantage: keys.advantage,
             disadvantage: keys.disadvantage,
             isConcentration: config.isConcentration,
@@ -72,25 +69,39 @@ export class RollUtility {
         };
     }
 
-    static processActivity(usageConfig, dialogConfig, messageConfig) {
-        const keys = {
-            normal: CoreUtility.areKeysPressed(usageConfig.event, "skipDialogNormal"),
-            advantage: CoreUtility.areKeysPressed(usageConfig.event, "skipDialogAdvantage"),
-            disadvantage: CoreUtility.areKeysPressed(usageConfig.event, "skipDialogDisadvantage")
-        };
+    static processActivity(activity, usageConfig, dialogConfig, messageConfig) {
+        const keys = _readSkipDialogKeys(usageConfig.event);
 
         const fastForward = !(keys.normal || (usageConfig.vanilla ?? false))
-        dialogConfig.configure = usageConfig.hasOwnProperty('spell')
-            || (usageConfig.scaling !== undefined && usageConfig.scaling !== false)
-            || messageConfig.data?.flags?.dnd5e?.activity?.type === 'order' 
+        // Preserve dnd5e's usage dialog for leveled spells so the player can
+        // choose an upcast slot; cantrips skip it and use automatic scaling.
+        // Note: dnd5e seeds usageConfig.scaling = 0 for any scalable activity
+        // (including cantrips), so it isn't a reliable "user wants the dialog"
+        // signal — the item-level check below is.
+        const isLeveledSpell = activity?.item?.type === "spell"
+            && (activity.item.system?.level ?? 0) > 0;
+        // Preserve OrderActivity dialogs because they populate costs/craft/trade
+        // flags that dnd5e later expects during bastion order resolution.
+        const isOrderActivity = activity?.type === "order";
+
+        dialogConfig.configure = isLeveledSpell
+            || isOrderActivity
             || !fastForward;
 
-        messageConfig.data.flags[MODULE_SHORT] = { 
+        messageConfig.data.flags[MODULE_SHORT] = {
             quickRoll: fastForward,
             advantage: keys.advantage,
             disadvantage: keys.disadvantage,
             processed: !fastForward
         };
+
+        // Only suppress dnd5e's follow-up rolls when RSR will fire them itself
+        // on the quick-roll path. On a slow roll, leave subsequentActions alone
+        // so dnd5e's _triggerSubsequentActions can drive attack/damage/healing/
+        // formula rolls after the usage dialog closes.
+        if (fastForward) {
+            usageConfig.subsequentActions = false;
+        }
     }
 
     /**
@@ -180,6 +191,14 @@ export class RollUtility {
 
         return _getCritResult(crit, fumble);
     }
+}
+
+function _readSkipDialogKeys(event) {
+    return {
+        normal: CoreUtility.areKeysPressed(event, "skipDialogNormal"),
+        advantage: CoreUtility.areKeysPressed(event, "skipDialogAdvantage"),
+        disadvantage: CoreUtility.areKeysPressed(event, "skipDialogDisadvantage")
+    };
 }
 
 function _getCritResult(crit, fumble)

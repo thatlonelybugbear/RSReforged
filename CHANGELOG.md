@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.4.0] — 2026-05-13
+
+### Changed
+- **The *Use Vanilla Rolls with RSReforged Styling* setting now sits at the top of the quick-roll section.** Its hint labels it as the master switch for quick-roll behavior, and each per-category hint notes that it has no effect when the master switch is enabled. Settings UI now reads top-down: pick vanilla mode first, then opt into per-category quick rolls.
+- **`RollUtility.processActivity` now receives the dnd5e activity as its first argument.** The public helper signature is now `processActivity(activity, usageConfig, dialogConfig, messageConfig)` so the leveled-spell and order-activity dialog rules can live beside the rest of the quick-roll policy instead of being duplicated in the hook.
+
+### Fixed
+- **Shift-click now reliably opens the roll or activity usage dialog.** Fixes [#8](https://github.com/arrowedisgaming/RSReforged/issues/8).
+  - dnd5e 5.3 initializes `dialog.configure` before RSReforged's pre-roll hooks run, so RSReforged now explicitly overwrites that boolean with its skip-dialog decision instead of using nullish assignment. This means RSReforged intentionally takes precedence over an earlier `dialog.configure` value when quick-roll settings are enabled.
+  - Quick-roll category checkboxes now take effect immediately instead of only controlling which hooks are registered at Foundry startup. Disabling *Quick Roll for Skills*, for example, now returns skill clicks to the normal dnd5e dialog without requiring a reload.
+  - Disabling *Quick Roll for Skills* or *Quick Roll for Tool Checks* while *Quick Roll for Abilities* remained enabled previously had no effect, because dnd5e fires `preRollAbilityCheckV2` for skill and tool checks too and RSReforged's ability handler was claiming them. The ability handler now defers to the more specific skill/tool handlers so each category controls its own roll path.
+  - The *Use Vanilla Rolls with RSReforged Styling* setting now also forces dnd5e's normal dialogs globally for skill checks, ability checks, saving throws, and tool checks, matching its existing activity-roll behavior.
+  - Activity usage messages preserve `quickRoll: false` from the pre-use hook so `preCreateChatMessage` no longer clobbers slow-roll decisions or auto-fires activity rolls before the dialog completes.
+  - Shift-clicking an item activity now lets dnd5e's `_triggerSubsequentActions` fire the follow-up attack/damage/healing/formula rolls after the usage dialog closes. RSReforged previously suppressed `usageConfig.subsequentActions` unconditionally, so slow-roll activity clicks opened the dialog and then dropped the actual rolls. Suppression is now scoped to the quick-roll path that fires those rolls itself.
+  - Cantrips and other zero-level scalable activities no longer pop the usage configuration dialog on a no-shift quick roll. The activity dialog rule no longer treats dnd5e's `usageConfig.scaling = 0` sentinel as a "show dialog" signal; only an actual leveled spell or order activity preserves the dialog.
+
 ## [4.3.0] — 2026-05-12
 
 ### Added

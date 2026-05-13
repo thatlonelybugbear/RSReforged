@@ -50,13 +50,17 @@ export class SettingsUtility {
     static registerSettings() {
         LogUtility.log("Registering module settings");
 
-        // QUICK ROLL SETTINGS        
+        // QUICK ROLL SETTINGS
+        // QUICK_VANILLA_ENABLED is registered first so it sits at the top of the
+        // settings UI: when it is on, RSReforged falls back to dnd5e's normal roll
+        // dialogs across the board, which makes it the master switch that gates the
+        // per-category toggles below.
 		const quickRollOptions = [
+            { name: SETTING_NAMES.QUICK_VANILLA_ENABLED, default: false },
             { name: SETTING_NAMES.QUICK_ABILITY_ENABLED, default: true },
             { name: SETTING_NAMES.QUICK_SKILL_ENABLED, default: true },
             { name: SETTING_NAMES.QUICK_TOOL_ENABLED, default: true },
-            { name: SETTING_NAMES.QUICK_ACTIVITY_ENABLED, default: true },
-            { name: SETTING_NAMES.QUICK_VANILLA_ENABLED, default: false }
+            { name: SETTING_NAMES.QUICK_ACTIVITY_ENABLED, default: true }
         ];
 
         quickRollOptions.forEach(option => {
@@ -66,8 +70,7 @@ export class SettingsUtility {
                 scope: "world",
                 config: true,
                 type: Boolean,
-                default: option.default,
-                requiresReload: true
+                default: option.default
             });
         });
 
