@@ -83,9 +83,26 @@ export class RollUtility {
         // Preserve OrderActivity dialogs because they populate costs/craft/trade
         // flags that dnd5e later expects during bastion order resolution.
         const isOrderActivity = activity?.type === "order";
+        // Smite-like features (Divine Smite et al.) need the dialog so the player can
+        // pick which slot to spend. The reliable signal is a spellSlots-typed entry in
+        // the activity's consumption.targets — the bare consumption.spellSlot boolean
+        // can't be used because dnd5e's schema initialises it to `true` on every
+        // activity (dnd5e.mjs:11857) and only honors it when `requiresSpellSlot`
+        // returns true, which is false for non-spell items. Reading the targets list
+        // distinguishes "configured spell-slot consumer" from "scaffolded default".
+        // Spell-type activities (cantrips, leveled spells) use a different consumption
+        // path and are handled by isLeveledSpell above.
+        const consumesSpellSlot = !!activity?.consumption?.targets?.some?.(t => t?.type === "spellSlots");
+        // Nonzero scaling means an upcast delta has already been seeded (e.g.
+        // drag-to-slot, macro). Preserve the dialog so the player can confirm or
+        // adjust. scaling = 0 is dnd5e's noisy default for any scalable activity
+        // (cantrips included), so check strictly > 0.
+        const hasUpcastScaling = (usageConfig.scaling ?? 0) > 0;
 
         dialogConfig.configure = isLeveledSpell
             || isOrderActivity
+            || consumesSpellSlot
+            || hasUpcastScaling
             || !fastForward;
 
         messageConfig.data.flags[MODULE_SHORT] = {
@@ -101,6 +118,19 @@ export class RollUtility {
         // formula rolls after the usage dialog closes.
         if (fastForward) {
             usageConfig.subsequentActions = false;
+        } else {
+            // RSR inverts dnd5e's skipDialog keybind: holding shift/ctrl/alt at
+            // activity click means "give me the full vanilla flow" (RSR shows the
+            // usage dialog, dnd5e then shows attack/damage/healing/formula dialogs).
+            // dnd5e's _triggerSubsequentActions forwards usageConfig.event into
+            // rollAttack/rollDamage, where applyKeybindings reads its modifier flags
+            // and interprets shift as "skip dialog" — the opposite of what the user
+            // just asked for. Strip the event so dnd5e's downstream keybinding
+            // checks see no modifier and default to showing their dialogs. All
+            // dnd5e call sites that read config.event after this point are
+            // null-safe (positional `event ? event.clientY - 80 : null`, `?.target`
+            // chains, `if (!event) return false` in areKeysPressed).
+            usageConfig.event = null;
         }
     }
 

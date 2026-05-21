@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.4.2] — 2026-05-21
+
+### Fixed
+- **Shift-click on an activity now invokes dnd5e's full vanilla flow end-to-end (usage dialog, then attack/damage/healing/formula dialog, then roll).** Previously the usage dialog appeared but the downstream damage/attack dialog was silently skipped, because the original click event with `shiftKey: true` propagated through `_triggerSubsequentActions` into `rollDamage`, where dnd5e's `applyKeybindings` reads `shiftKey` as "skip dialog" — the opposite of RSR's "force dialog" convention. RSR now strips `usageConfig.event` on the slow-roll path so dnd5e's downstream keybinding checks see no modifier and default to showing their dialogs. The quick-roll path is unaffected; the event is preserved (so dialog positioning still works) on normal clicks.
+- **Features that consume spell slots (Divine Smite and other smite-like abilities) now open dnd5e's usage dialog so the player can choose which slot to spend.** Fixes [#10](https://github.com/arrowedisgaming/RSReforged/issues/10). The 4.4.0 dialog rule narrowed preservation to leveled spells and order activities to stop cantrips from prompting on quick rolls. That was too narrow: smite-like features are non-spell items, and dnd5e seeds `usageConfig.scaling = 0` for them just as it does for cantrips, so they fell into the quick-roll path and the system silently consumed the lowest available slot. The dialog rule now additionally preserves the dialog when the activity's static `consumption.targets` includes an entry of type `spellSlots`, or when an upcast delta has already been seeded (`usageConfig.scaling > 0`). The discriminator is the `spellSlots` consumption target rather than `consumption.spellSlot` — the latter defaults to `true` for every activity in the dnd5e schema and would force the dialog on unrelated feature quick-rolls. Cantrip suppression is unchanged because cantrips have no `spellSlots` consumption target.
+
 ## [4.4.1] — 2026-05-13
 
 ### Fixed
