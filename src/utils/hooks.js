@@ -1,11 +1,11 @@
 import { BonusManager } from "./bonus.js";
 import { RerollManager } from "./reroll.js";
-import { MODULE_SHORT, MODULE_TITLE } from "../module/const.js";
+import { MODULE_NAME, MODULE_SHORT, MODULE_TITLE } from "../module/const.js";
 import { ActivityUtility } from "./activity.js";
 import { ChatUtility } from "./chat.js";
 import { CoreUtility } from "./core.js";
 import { LogUtility } from "./log.js";
-import { ROLL_TYPE, RollUtility } from "./roll.js";
+import { KEYBIND_VERSATILE_TWO_HANDED, ROLL_TYPE, RollUtility } from "./roll.js";
 import { SETTING_NAMES, SettingsUtility } from "./settings.js";
 
 export const HOOKS_CORE = { INIT: "init", READY: "ready" }
@@ -34,6 +34,7 @@ export class HooksUtility {
         Hooks.once(HOOKS_CORE.INIT, () => {
             LogUtility.log(`Initialising ${MODULE_TITLE}`);
             SettingsUtility.registerSettings();
+            HooksUtility.registerKeybindings();
             HooksUtility.registerRollHooks();
             HooksUtility.registerChatHooks();
             RerollManager.registerGlobalListener();
@@ -47,6 +48,29 @@ export class HooksUtility {
             );
             CONFIG.DND5E.aggregateDamageDisplay = SettingsUtility.getSettingValue(SETTING_NAMES.AGGREGATE_DAMAGE) ?? true;
             LogUtility.log(`Loaded ${MODULE_TITLE}`);
+        });
+    }
+
+    /**
+     * Register RSReforged-namespaced keybindings. Must be called during `init` —
+     * Foundry rejects keybinding registration once the game is ready.
+     *
+     * `versatileTwoHanded` defaults to KeyV (matching Midi-QOL's convention) and
+     * is rebindable through Foundry's *Configure Controls* UI. The keybinding does
+     * not need an `onDown`/`onUp` handler: we read the held state at click time
+     * via `game.keyboard.downKeys`, which Foundry maintains regardless of whether
+     * a handler is attached. The registration exists purely so the binding shows
+     * up in Configure Controls with a localised name.
+     */
+    static registerKeybindings() {
+        LogUtility.log("Registering keybindings");
+
+        game.keybindings.register(MODULE_NAME, KEYBIND_VERSATILE_TWO_HANDED, {
+            name: CoreUtility.localize(`${MODULE_SHORT}.keybindings.versatileTwoHanded.name`),
+            hint: CoreUtility.localize(`${MODULE_SHORT}.keybindings.versatileTwoHanded.hint`),
+            editable: [{ key: "KeyV" }],
+            restricted: false,
+            precedence: CONST.KEYBINDING_PRECEDENCE.NORMAL
         });
     }
 

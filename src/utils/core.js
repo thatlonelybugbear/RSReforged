@@ -29,11 +29,12 @@ export class CoreUtility {
 
     /**
      * Based on the provided event, determine if the keys are pressed to fulfill the specified keybinding.
-     * @param {Event} event    Triggering event.
-     * @param {string} action  Keybinding action within the `dnd5e` namespace.
-     * @returns {boolean}      Is the keybinding triggered?
+     * @param {Event} event       Triggering event.
+     * @param {string} action     Keybinding action.
+     * @param {string} namespace  Keybinding namespace (defaults to "dnd5e" for back-compat).
+     * @returns {boolean}         Is the keybinding triggered?
      */
-    static areKeysPressed(event, action) {
+    static areKeysPressed(event, action, namespace = "dnd5e") {
         if (!event) return false;
         const activeModifiers = {};
         const addModifiers = (key, pressed) => {
@@ -43,7 +44,7 @@ export class CoreUtility {
         addModifiers(foundry.helpers.interaction.KeyboardManager.MODIFIER_KEYS.CONTROL, event.ctrlKey || event.metaKey);
         addModifiers(foundry.helpers.interaction.KeyboardManager.MODIFIER_KEYS.SHIFT, event.shiftKey);
         addModifiers(foundry.helpers.interaction.KeyboardManager.MODIFIER_KEYS.ALT, event.altKey);
-        return game.keybindings.get("dnd5e", action).some(b => {
+        return game.keybindings.get(namespace, action).some(b => {
             if (game.keyboard.downKeys.has(b.key) && b.modifiers.every(m => activeModifiers[m])) return true;
             if (b.modifiers.length) return false;
             return activeModifiers[b.key];

@@ -252,10 +252,12 @@ export class ActivityUtility {
         const activity = ActivityUtility._getActivityFromMessage(message);
         if (!activity || typeof activity.rollAttack !== "function") return null;
 
+        const attackMode = message.flags[MODULE_SHORT].attackMode;
         const config = {
             advantage:    message.flags[MODULE_SHORT].advantage    ?? false,
             disadvantage: message.flags[MODULE_SHORT].disadvantage ?? false,
-            ammunition:   message.flags[MODULE_SHORT].ammunition
+            ammunition:   message.flags[MODULE_SHORT].ammunition,
+            ...(attackMode ? { attackMode } : {})
         };
 
         const dialogConfig  = { configure: false };
@@ -304,6 +306,7 @@ export class ActivityUtility {
             activity.item.flags.dnd5e.scaling = scaling;
         }
 
+        const attackMode = message.flags[MODULE_SHORT].attackMode;
         const config = {
             isCritical: message.flags[MODULE_SHORT].isCritical ?? false,
             // Pass the live Item document so rollDamage can read ammo properties.
@@ -316,8 +319,17 @@ export class ActivityUtility {
             // scaling: 0 forces scaledFormula(0) because rollConfig.scaling is
             // nullish-coalesced with rollData.scaling at dnd5e.mjs:12545.
             ...(scaling > 0 ? { scaling } : {}),
+            // dnd5e's AttackActivity.rollDamage swaps the base damage formula for
+            // the versatile formula when attackMode === "twoHanded" && item.isVersatile
+            // (dnd5e.mjs:28327-28328), and clamps the mod for *-offhand modes
+            // (dnd5e.mjs:28343). Forwarding attackMode is therefore enough — no
+            // formula manipulation needed on our side.
+            ...(attackMode ? { attackMode } : {}),
             midiOptions: CoreUtility.hasModule(MODULE_MIDI)
-                ? { isCritical: message.flags[MODULE_SHORT].isCritical ?? false }
+                ? {
+                    isCritical: message.flags[MODULE_SHORT].isCritical ?? false,
+                    ...(attackMode ? { attackMode } : {})
+                }
                 : undefined
         };
 

@@ -310,3 +310,13 @@
     top: 50%;
     transform: translateY(-50%);
 }
+
+/* Versatile tag — appended to the dnd5e native damage card's formula row
+   when the V keybind was held during the roll. Mirrors the "(Versatile)"
+   suffix the RSR-mode damage card builds into its section title. */
+.rsr-versatile-tag {
+    margin-left: 0.3em;
+    font-style: italic;
+    opacity: 0.75;
+    font-size: 0.9em;
+}

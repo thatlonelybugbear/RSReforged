@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.5.0] — 2026-05-27
+
+### Added
+- **Hold V to roll a Versatile weapon two-handed.** Fixes [#12](https://github.com/arrowedisgaming/RSReforged/issues/12). A new RSReforged keybind, *Use Versatile Two-Handed* (default `KeyV`, rebindable in *Configure Controls*), is read at click time on activity use: if the weapon is Versatile and the key is held, `attackMode: "twoHanded"` is stamped onto the message flags before rolls fire. Both `rollAttack` and `rollDamage` receive it, so dnd5e's `AttackActivity.rollDamage` swaps to the versatile damage formula automatically (dnd5e.mjs:28327-28328) — RSR doesn't touch the formula, just passes the mode through. The card's existing "(Versatile)" damage label, which had no writer until now, lights up on a two-handed roll. Plain click is unchanged (one-handed); no dialogs, no added clicks, no per-weapon configuration to forget. Non-Versatile weapons — daggers, greatswords, longbows, shortbows, etc. — are unaffected since their damage die does not change between attack modes. Shift-click continues to drop into dnd5e's full vanilla flow, which surfaces the system's native attack-mode dropdown (including modes RSR's quick-roll path doesn't expose, like off-hand and thrown variants) and writes the same `flags.dnd5e.last.<activityId>.attackMode` it always did. Activities routed through Midi-QOL bypass RSR's pipeline; Midi has its own equivalent V keybind, so behaviour there is unchanged.
+
 ## [4.4.2] — 2026-05-21
 
 ### Fixed

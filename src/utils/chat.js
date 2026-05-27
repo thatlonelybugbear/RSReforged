@@ -619,6 +619,17 @@ async function _injectDamageRoll(message, html, { mode = "rsr" } = {}) {
         if (!nativeHTML.length) nativeHTML = renderedHTML.find('.dice-roll').closest('.dnd5e2.chat-card');
         if (!nativeHTML.length) nativeHTML = renderedHTML.find('.dice-roll');
 
+        // The RSR-mode branch below builds its own section title and tags it with
+        // "(Versatile)" via flags.versatile. dnd5e's native damage card has no such
+        // header — it just shows the formula. Append the tag to the formula row so
+        // the player gets the same signal regardless of Damage Apply UI choice.
+        if (message.flags[MODULE_SHORT].versatile) {
+            const label = CoreUtility.localize("DND5E.Versatile");
+            const tag = `<span class="rsr-versatile-tag">(${label})</span>`;
+            const formula = nativeHTML.find('.dice-formula').first();
+            if (formula.length) formula.append(` ${tag}`);
+        }
+
         _safeInsert(nativeHTML, html);
         return;
     }

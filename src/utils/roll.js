@@ -1,6 +1,8 @@
-import { MODULE_SHORT } from "../module/const.js";
+import { MODULE_NAME, MODULE_SHORT } from "../module/const.js";
 import { CoreUtility } from "./core.js";
 import { SETTING_NAMES, SettingsUtility } from "./settings.js";
+
+export const KEYBIND_VERSATILE_TWO_HANDED = "versatileTwoHanded";
 
 /**
  * Enumerable of identifiers for different roll types that can be made.
@@ -105,12 +107,37 @@ export class RollUtility {
             || hasUpcastScaling
             || !fastForward;
 
-        messageConfig.data.flags[MODULE_SHORT] = {
+        const flagSeed = {
             quickRoll: fastForward,
             advantage: keys.advantage,
             disadvantage: keys.disadvantage,
             processed: !fastForward
         };
+
+        // Versatile shortcut. On a quick-roll click of a Versatile weapon, stamp
+        // attackMode explicitly so dnd5e doesn't fall back to whatever it last
+        // persisted on the item. dnd5e's rollAttack writes
+        // flags.dnd5e.last.<id>.attackMode after every roll, so without an
+        // explicit choice here a single V-held click would pin the weapon to
+        // twoHanded for all subsequent plain clicks. Holding the
+        // rsreforged.versatileTwoHanded key (KeyV by default, matches Midi-QOL's
+        // convention) flips this roll to twoHanded; releasing it falls back to
+        // oneHanded. Both modes also surface in the chat-card label via
+        // flags.rsreforged.versatile.
+        //
+        // No event = no keystroke. fastForward only — slow-roll uses dnd5e's own
+        // attack-mode dropdown which writes the same last.attackMode item flag.
+        if (fastForward && activity?.item?.system?.isVersatile) {
+            const versatileHeld = !!usageConfig.event && CoreUtility.areKeysPressed(
+                usageConfig.event,
+                KEYBIND_VERSATILE_TWO_HANDED,
+                MODULE_NAME
+            );
+            flagSeed.attackMode = versatileHeld ? "twoHanded" : "oneHanded";
+            flagSeed.versatile = versatileHeld;
+        }
+
+        messageConfig.data.flags[MODULE_SHORT] = flagSeed;
 
         // Only suppress dnd5e's follow-up rolls when RSR will fire them itself
         // on the quick-roll path. On a slow roll, leave subsequentActions alone

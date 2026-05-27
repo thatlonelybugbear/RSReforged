@@ -5,7 +5,7 @@ import { CoreUtility } from "./core.js";
  */
 export class DialogUtility {
     static getConfirmDialog(title, options) {
-        return new Promise(resolve => { 
+        return new Promise(resolve => {
             const data = {
                 title,
                 content: "",

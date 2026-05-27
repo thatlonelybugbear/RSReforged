@@ -87,6 +87,12 @@
                 "label": "Label"
             }
         },
+        "keybindings": {
+            "versatileTwoHanded": {
+                "name": "Use Versatile Two-Handed",
+                "hint": "Hold this key when clicking a Versatile weapon attack (longsword, quarterstaff, etc.) to roll it two-handed. Default: V. Releases automatically after the click — no toggle to remember. Has no effect on non-Versatile weapons."
+            }
+        },
         "chat": {
             "buttons": {
                 "damageFull": "Click to apply full damage to selected token(s).",

@@ -49,6 +49,7 @@ vi.mock("../src/utils/bonus.js", () => ({ BonusManager: { init: vi.fn() } }));
 vi.mock("../src/utils/chat.js", () => ({ ChatUtility: { processChatMessage: vi.fn() } }));
 vi.mock("../src/utils/reroll.js", () => ({ RerollManager: { registerGlobalListener: vi.fn() } }));
 vi.mock("../src/utils/roll.js", () => ({
+    KEYBIND_VERSATILE_TWO_HANDED: "versatileTwoHanded",
     ROLL_TYPE: { ATTACK: "attack" },
     RollUtility: {
         processActivity: state.processActivity,
