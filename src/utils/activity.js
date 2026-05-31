@@ -294,7 +294,7 @@ export class ActivityUtility {
         const activity = ActivityUtility._getActivityFromMessage(message);
         const actor    = ActivityUtility._getActorFromMessage(message);
 
-        if (!activity || !actor || typeof activity.rollDamage !== "function") return null;
+        if (!activity || !actor || typeof activity.rollDamage !== "function" || !(activity.getDamageConfig?.({})?.rolls?.length)) return null;
 
         // Resolve scaling from system data (5.3.0 canonical) with flags fallback.
         const scaling = message.system?.scaling ?? message.flags?.dnd5e?.scaling ?? 0;
