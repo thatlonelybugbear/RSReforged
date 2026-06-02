@@ -492,16 +492,21 @@ async function _injectContent(message, type, html) {
                 || message.flags[MODULE_SHORT].renderAttack
                 || message.flags[MODULE_SHORT].renderFormula
                 || message.flags[MODULE_SHORT].renderDamage) {
+                // Rescue dnd5e-injected supplements (mastery anchors, damage-on-save
+                // notes, legendary-resistance flags from _enrichAttackTargets et al.)
+                // off chat-cards we're about to remove, before the strip. Parked at
+                // html root so the post-inject rescue below can move them under
+                // .rsr-section-attack alongside supplements that survived the strip
+                // in their original location.
+                const doomed = html.find('.dnd5e2.chat-card').not('.activation-card, .usage-card');
+                doomed.find('.supplement').appendTo(html);
                 html.find('.dice-roll').remove();
-                html.find('.dnd5e2.chat-card').not('.activation-card, .usage-card').remove();
+                doomed.remove();
             }
 
             if (message.flags[MODULE_SHORT].renderAttack || message.flags[MODULE_SHORT].renderAttack === false) {
                 html.find('[data-action=rollAttack], [data-action=attack]').remove();
                 await _injectAttackRoll(message, actions, { contentHtml: html });
-
-                html.find('.rsr-section-attack').append(html.find('.supplement'));
-                html.find('.supplement').removeClass('supplement').addClass('rsr-supplement');
             }
 
             if (message.flags[MODULE_SHORT].manualDamage || message.flags[MODULE_SHORT].renderDamage) {
@@ -526,6 +531,24 @@ async function _injectContent(message, type, html) {
                 await _injectApplyDamageButtons(message, html);
                 const rootParent = html.closest('.message-content');
                 if (rootParent.length) rootParent.find('> .dice-roll').remove();
+            }
+
+            // Place surviving + rescued dnd5e supplements (mastery anchors,
+            // damage-on-save notes, legendary-resistance flags) into the most
+            // specific RSR section that exists for this card. Runs after all
+            // injects so we have a complete picture of which sections were
+            // created. Add .rsr-supplement for RSR's own styling
+            // (css/rsreforged.css) but keep the original .supplement class so
+            // downstream modules and dnd5e's own enrichers continue to find
+            // them. The host-narrowed selector on the addClass step prevents
+            // double-tagging supplements inside surviving .activation-card /
+            // .usage-card subtrees that RSR's strip explicitly preserves.
+            let supplementHost = html.find('.rsr-section-attack');
+            if (!supplementHost.length) supplementHost = html.find('.rsr-section-damage');
+            if (!supplementHost.length) supplementHost = html.find('.rsr-section-formula');
+            if (supplementHost.length) {
+                supplementHost.append(html.find('.supplement').not(supplementHost.find('.supplement')));
+                supplementHost.find('.supplement').addClass('rsr-supplement');
             }
             break;
         }

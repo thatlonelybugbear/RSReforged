@@ -166,6 +166,46 @@ describe("Integration API: rsreforged.* hook emissions in chat.js", () => {
         expect(injectContent).toMatch(/_injectFormulaRoll\([^)]*contentHtml:\s*html/);
     });
 
+    it("rescues dnd5e .supplement elements from doomed chat-cards BEFORE the strip — preserves mastery anchors, damage-on-save notes, and legendary-resistance flags for standalone attack-roll cards", () => {
+        // Regression for #13. dnd5e's _enrichAttackTargets appends a <p class="supplement">
+        // (mastery anchor + others) to .dnd5e2.chat-card. For standalone attack-roll cards
+        // (no .activation-card / .usage-card class), RSR's strip would remove the supplement
+        // along with the card. The rescue must detach .supplement OUT of the doomed cards
+        // before remove() runs.
+        const body = extractFunctionBody(CHAT_JS, "async function _injectContent(message, type, html)");
+
+        // Locate the strip block — the assignment that captures doomed cards.
+        const doomedIdx = body.search(/const\s+doomed\s*=\s*html\.find\(\s*['"`]\.dnd5e2\.chat-card['"`]\s*\)\.not\(/);
+        expect(doomedIdx).toBeGreaterThan(-1);
+
+        // The detach + appendTo must happen on `doomed` and precede `doomed.remove()`.
+        const detachIdx = body.indexOf("doomed.find('.supplement').appendTo(html)", doomedIdx);
+        const removeIdx = body.indexOf("doomed.remove()", doomedIdx);
+        expect(detachIdx).toBeGreaterThan(doomedIdx);
+        expect(removeIdx).toBeGreaterThan(detachIdx);
+    });
+
+    it("places supplements into .rsr-section-attack with .rsr-section-damage and .rsr-section-formula as fallbacks — non-attack activity cards (save-only damage, formula-only) get supplements placed and styled, not orphaned at html root", () => {
+        // Regression for the case where damage-on-save or legendary-resistance
+        // supplements ride a SaveActivity that has renderDamage but no renderAttack.
+        // Pre-fix the placement was inside `if (renderAttack)` so those activities
+        // had their supplements detached but never re-placed under any RSR section.
+        const body = extractFunctionBody(CHAT_JS, "async function _injectContent(message, type, html)");
+        expect(body).toMatch(/supplementHost\s*=\s*html\.find\(\s*['"`]\.rsr-section-attack['"`]\s*\)/);
+        expect(body).toMatch(/supplementHost\s*=\s*html\.find\(\s*['"`]\.rsr-section-damage['"`]\s*\)/);
+        expect(body).toMatch(/supplementHost\s*=\s*html\.find\(\s*['"`]\.rsr-section-formula['"`]\s*\)/);
+    });
+
+    it("does NOT removeClass('supplement') anywhere in chat.js — downstream modules and dnd5e enrichers must continue to find .supplement after the rebuild", () => {
+        // Regression for #13. The pre-fix rescue at chat.js:504 renamed
+        // .supplement -> .rsr-supplement, breaking any module querying for the
+        // original class. The fix is additive: keep .supplement, add .rsr-supplement
+        // for RSR's own styling.
+        expect(CHAT_JS).not.toMatch(/removeClass\(\s*['"`]supplement['"`]\s*\)/);
+        // And the additive class must still be applied so RSR's CSS hits.
+        expect(CHAT_JS).toMatch(/addClass\(\s*['"`]rsr-supplement['"`]\s*\)/);
+    });
+
     it("emits preRenderChatMessageContent BEFORE the child-merge return path — locks in the contract the wm5e worked example relies on", () => {
         // The child-merge path inside _injectContent (ATTACK / DAMAGE fall-through cases)
         // calls message.delete(); return; — at which point renderChatMessageContent and
