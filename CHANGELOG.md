@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.7.1] — 2026-06-02
+
+### Fixed
+- **dnd5e `.supplement` content (mastery anchors, damage-on-save notes, legendary-resistance flags) now survives RSR's chat-card rebuild.** Fixes [#13](https://github.com/arrowedisgaming/RSReforged/issues/13). Three stacked regressions are addressed in `src/utils/chat.js`: (1) the strip block that removed plain `.dnd5e2.chat-card` wrappers to avoid duplicate damage UIs would take any `<p class="supplement">` dnd5e's `_enrichAttackTargets` had appended down with it, deleting the supplement before the post-inject rescue could relocate it — RSR now detaches surviving supplements off doomed cards before `remove()` runs; (2) the existing rescue moved supplements under `.rsr-section-attack` but renamed `.supplement` → `.rsr-supplement`, breaking downstream queries by wm5e and dnd5e's own re-walking enrichers — the rename is now additive, so rebuilt supplements carry **both** classes (`.supplement` for compatibility, `.rsr-supplement` for RSR styling); (3) the placement step was gated on `renderAttack`, so save-only or formula-only activities (e.g. a `SaveActivity` with damage-on-save) had supplements detached but never re-placed — placement now runs after all injects with a `.rsr-section-attack` → `.rsr-section-damage` → `.rsr-section-formula` fallback chain. Spotted by [@thatlonelybugbear](https://github.com/thatlonelybugbear) on the wm5e thread; `tests/integration-hooks.test.mjs` gains three source-level assertions that lock the contract in.
+
 ## [4.7.0] — 2026-06-02
 
 ### Fixed
