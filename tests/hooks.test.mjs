@@ -108,7 +108,7 @@ describe("HooksUtility preCreateChatMessage quick-roll flags", () => {
 
     it("honors the skill quick-roll setting at roll time", () => {
         const handlers = registerRollHooks();
-        const preRollSkill = handlers.get("dnd5e.preRollSkillV2");
+        const preRollSkill = handlers.get("dnd5e.preRollSkill");
         const config = {};
         const dialog = { configure: true };
         const message = { data: { flags: {} } };

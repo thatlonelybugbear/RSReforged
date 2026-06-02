@@ -333,6 +333,14 @@ export class ActivityUtility {
                 : undefined
         };
 
+        // Skip activities that resolve to zero damage parts under the resolved config
+        // (e.g. SaveActivity for Faerie Fire / Bane). Passing the same `config`
+        // rollDamage will use keeps ammo-driven attacks alive — AttackActivity.getDamageConfig
+        // only merges ammunition damage when config.ammunition is set
+        // (dnd5e.mjs AttackActivity#getDamageConfig), so calling it with `{}` would
+        // false-negative on weapons whose damage comes entirely from the ammo.
+        if (typeof activity.getDamageConfig === "function" && !activity.getDamageConfig(config).rolls?.length) return null;
+
         const dialogConfig  = { configure: false };
         const messageConfig = { create: false, data: { flags: {} }, flags: {} };
         messageConfig.data.flags[MODULE_SHORT] = { quickRoll: true };

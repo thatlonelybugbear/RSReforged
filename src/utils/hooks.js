@@ -11,12 +11,12 @@ import { SETTING_NAMES, SettingsUtility } from "./settings.js";
 export const HOOKS_CORE = { INIT: "init", READY: "ready" }
 
 export const HOOKS_DND5E = {
-    PRE_ROLL_ABILITY_CHECK: "dnd5e.preRollAbilityCheckV2",
-    PRE_ROLL_SAVING_THROW: "dnd5e.preRollSavingThrowV2",
-    PRE_ROLL_SKILL: "dnd5e.preRollSkillV2",
-    PRE_ROLL_TOOL_CHECK: "dnd5e.preRollToolV2",
-    PRE_ROLL_ATTACK: "dnd5e.preRollAttackV2",
-    PRE_ROLL_DAMAGE: "dnd5e.preRollDamageV2",
+    PRE_ROLL_ABILITY_CHECK: "dnd5e.preRollAbilityCheck",
+    PRE_ROLL_SAVING_THROW: "dnd5e.preRollSavingThrow",
+    PRE_ROLL_SKILL: "dnd5e.preRollSkill",
+    PRE_ROLL_TOOL_CHECK: "dnd5e.preRollTool",
+    PRE_ROLL_ATTACK: "dnd5e.preRollAttack",
+    PRE_ROLL_DAMAGE: "dnd5e.preRollDamage",
     PRE_USE_ACTIVITY: "dnd5e.preUseActivity",
     // POST_USE_ACTIVITY removed: in dnd5e 5.3.0 we use usageConfig.subsequentActions = false
     // in PRE_USE_ACTIVITY instead of returning false from POST_USE_ACTIVITY to block auto-rolls.
@@ -78,8 +78,8 @@ export class HooksUtility {
         LogUtility.log("Registering roll hooks");
 
         Hooks.on(HOOKS_DND5E.PRE_ROLL_ABILITY_CHECK, (config, dialog, message) => {
-            // dnd5e 5.3 fires preRollAbilityCheckV2 for skill and tool checks too
-            // (their hookNames chain is [type, "abilityCheck", "d20Test"]). Defer to
+            // dnd5e fires preRollAbilityCheck for skill and tool checks too (their
+            // hookNames chain is [type, "abilityCheck", "d20Test"]). Defer to
             // PRE_ROLL_SKILL / PRE_ROLL_TOOL_CHECK so each category's setting controls
             // its own roll path instead of QUICK_ABILITY_ENABLED hijacking them.
             if (config.hookNames?.some(n => n === "skill" || n === "tool")) return true;
