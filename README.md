@@ -194,7 +194,7 @@ Issues and PRs welcome at [github.com/arrowedisgaming/RSReforged](https://github
 
 RSReforged is a maintained fork of [Ready Set Roll for D&D5e](https://github.com/MangoFVTT/fvtt-ready-set-roll-5e) by [MangoFVTT](https://github.com/MangoFVTT), itself a rewrite of [Better Rolls for 5e](https://github.com/RedReign/FoundryVTT-BetterRolls5e) by [RedReign](https://github.com/RedReign). The fork started in early 2026 to keep the module working on Foundry v14 and dnd5e 5.3; the compatibility work came from [PR #619](https://github.com/MangoFVTT/fvtt-ready-set-roll-5e/pull/619) by [maxobremer](https://github.com/maxobremer). Huge thanks to all three.
 
-A read-only snapshot of the upstream v3.5.0 source is kept at [`docs/upstream-v3.5.0-snapshot/`](docs/upstream-v3.5.0-snapshot/) for reference and diffing.
+For reference and diffing against the source the fork is based on, see the upstream [`release-3.5.0` tag](https://github.com/MangoFVTT/fvtt-ready-set-roll-5e/releases/tag/release-3.5.0).
 
 ## License
 
