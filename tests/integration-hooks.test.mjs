@@ -47,6 +47,10 @@ function extractFunctionBody(source, signature) {
 }
 
 describe("Integration API: rsreforged.* hook emissions in chat.js", () => {
+    // Structural smoke check only — it counts call sites in source text, so a refactor
+    // that moves an emit behind a dead guard would keep the count at 7. The behavioral
+    // guarantees (each emit fires on the correct branch, in the correct order) live in
+    // the per-emit tests below; this guard just catches an accidental add/drop of a site.
     it("emits exactly seven Hooks.callAll sites (one pre, one post, three roll types with damage emitting twice, one apply-damage)", () => {
         const matches = CHAT_JS.match(/Hooks\.callAll/g) ?? [];
         expect(matches.length).toBe(7);

@@ -122,6 +122,31 @@ describe("HooksUtility preCreateChatMessage quick-roll flags", () => {
         expect(state.processRoll).toHaveBeenCalledWith(config, dialog, message);
     });
 
+    it("does not let the ability hook process skill or tool rolls", () => {
+        const handlers = registerRollHooks();
+        const preRollAbility = handlers.get("dnd5e.preRollAbilityCheck");
+        const dialog = { configure: true };
+        const message = { data: { flags: {} } };
+
+        expect(preRollAbility({ hookNames: ["skill", "abilityCheck"] }, dialog, message)).toBe(true);
+        expect(preRollAbility({ hookNames: ["tool", "abilityCheck"] }, dialog, message)).toBe(true);
+
+        expect(state.processRoll).not.toHaveBeenCalled();
+    });
+
+    it("processes a plain ability check through the ability hook", () => {
+        const handlers = registerRollHooks();
+        const preRollAbility = handlers.get("dnd5e.preRollAbilityCheck");
+        const config = { hookNames: ["abilityCheck", "d20Test"] };
+        const dialog = { configure: true };
+        const message = { data: { flags: {} } };
+
+        // Positive branch: a genuine ability check (no skill/tool in the chain) must
+        // still be quick-rolled, otherwise the skill/tool guard would have swallowed it.
+        expect(preRollAbility(config, dialog, message)).toBe(true);
+        expect(state.processRoll).toHaveBeenCalledWith(config, dialog, message);
+    });
+
     it("honors the activity quick-roll setting at use time", () => {
         const handlers = registerRollHooks();
         const preUseActivity = handlers.get("dnd5e.preUseActivity");
@@ -142,6 +167,30 @@ describe("HooksUtility preCreateChatMessage quick-roll flags", () => {
         // (subsequentActions, dialogConfig.configure, MODULE_SHORT flags) belong
         // to processActivity and are exercised in roll.test.mjs against the real
         // implementation — asserting them here would lock in mock behavior.
+    });
+
+    it("does not process activity quick-roll hooks when vanilla workflow mode is enabled", () => {
+        const handlers = registerRollHooks();
+        const preUseActivity = handlers.get("dnd5e.preUseActivity");
+
+        state.settings.enableActivityQuickRoll = true;
+        state.settings.enableVanillaQuickRoll = true;
+
+        expect(preUseActivity({}, {}, {}, { data: { flags: {} } })).toBe(true);
+        expect(state.processActivity).not.toHaveBeenCalled();
+    });
+
+    it("records consumed ammunition on attack message flags and restores temporary quantity", () => {
+        const handlers = registerRollHooks();
+        const activityConsumption = handlers.get("dnd5e.activityConsumption");
+        const activity = { type: "attack", hasOwnProperty: Object.prototype.hasOwnProperty };
+        const messageConfig = {};
+        const ammoUpdate = { _id: "arrow-1", "system.quantity": 0 };
+
+        activityConsumption(activity, {}, messageConfig, { item: [ammoUpdate] });
+
+        expect(messageConfig.flags[MODULE_SHORT].ammunition).toBe("arrow-1");
+        expect(ammoUpdate["system.quantity"]).toBe(1);
     });
 
     it("preserves slow-roll flags written by the pre-use activity hook", () => {

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.8.0] — 2026-06-03
+
+### Added
+- **jsdom + jQuery-backed unit test harness** (`tests/helpers/foundry-env.mjs`) that mocks the Foundry/dnd5e global environment, now tracked alongside the `jsdom` / `jquery` / `@vitest/coverage-v8` dev-dependencies that imply it (previously the harness, `vitest.config.mjs`, and most test files were untracked, so the green suite could not be reproduced from a clean clone). Adds `vitest.config.mjs` with v8 coverage gating (statements 45 / branches 40 / functions 50 / lines 48) wired through `test:watch` and `test:coverage` scripts. The suite now covers the activity flow, chat rendering, critical/reroll/bonus paths, settings, and module-entry hook wiring (98 tests).
+
+### Changed
+- **Test harness now models roll-total recomputation faithfully** so interactive-dice regressions are caught instead of masked: `Roll.total` is a getter over `_total`, `Die.total` recomputes from its live results, and `Roll._evaluateTotal()` re-sums its terms. The reroll keep-high/keep-low tests were rewritten to drive the real `RerollManager._recalculateModifiers` delegation (instead of a stubbed `_evaluateModifiers`) and assert the refolded total. `game.settings.get` is now namespace-aware (foreign namespaces such as `core.rollMode` resolve to realistic defaults rather than leaking RSR values), `game.keybindings.get` returns `[]` for unregistered actions to match Foundry, the `applyDamageTo` targeting tests now exercise the real registered default (selected-only), and `module-entry.test.mjs` verifies the real init/ready hook wiring rather than a mocked call count.
+
 ## [4.7.2] — 2026-06-03
 
 ### Fixed

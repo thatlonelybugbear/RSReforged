@@ -1,0 +1,147 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { makeRoll, setupFoundryEnv } from "./helpers/foundry-env.mjs";
+
+describe("ChatUtility message lifecycle behavior", () => {
+    let env;
+    let ChatUtility;
+    let MODULE_SHORT;
+
+    beforeEach(async () => {
+        vi.resetModules();
+        env = await setupFoundryEnv();
+        ({ MODULE_SHORT } = await import("../src/module/const.js"));
+        ({ ChatUtility } = await import("../src/utils/chat.js"));
+    });
+
+    it("renders processed usage cards after dnd5e has produced stable card HTML", async () => {
+        const attack = makeRoll(env.classes.D20Roll, { formula: "1d20+5", total: 23, faces: 20, results: [18] });
+        const damage = makeRoll(env.classes.DamageRoll, { formula: "1d8+3", total: 9, faces: 8, results: [6] });
+        const formula = makeRoll(env.classes.BasicRoll, { formula: "1d6", total: 4, faces: 6, results: [4] });
+        const actor = { isOwner: true, items: { get: vi.fn() } };
+        const message = new env.classes.TestChatMessage({
+            type: "usage",
+            isAuthor: true,
+            isContentVisible: true,
+            flags: {
+                [MODULE_SHORT]: {
+                    quickRoll: true,
+                    processed: true,
+                    renderAttack: true,
+                    renderDamage: true,
+                    renderFormula: true,
+                    rolls: [attack, damage, formula]
+                },
+                dnd5e: { activity: { type: "attack" } }
+            },
+            getAssociatedActor: () => actor
+        });
+        const html = $(`
+            <article class="chat-message">
+                <div class="message-content">
+                    <div class="dnd5e2 chat-card usage-card">
+                        <div class="card-buttons">
+                            <button data-action="rollAttack"></button>
+                            <button data-action="rollDamage"></button>
+                            <button data-action="rollFormula"></button>
+                        </div>
+                        <span class="supplement">Weapon mastery</span>
+                    </div>
+                    <div class="dnd5e2 chat-card"><div class="dice-roll"></div></div>
+                </div>
+            </article>
+        `);
+
+        await ChatUtility.processUsageChatMessage(message, html[0]);
+
+        expect(html.find(".rsr-section-attack")).toHaveLength(1);
+        expect(html.find(".rsr-section-damage")).toHaveLength(1);
+        expect(html.find(".rsr-section-roll")).toHaveLength(1);
+        expect(html.find("[data-action=rollAttack], [data-action=rollDamage], [data-action=rollFormula]")).toHaveLength(0);
+        expect(html.find(".rsr-damage-buttons-xl")).toHaveLength(1);
+        expect(ui.chat.scrollBottom).toHaveBeenCalled();
+
+        const hookNames = env.hookCalls.map((call) => call.name);
+        expect(hookNames).toEqual(expect.arrayContaining([
+            `${MODULE_SHORT}.preRenderChatMessageContent`,
+            `${MODULE_SHORT}.renderChatMessageContent`,
+            `${MODULE_SHORT}.renderApplyDamageButtons`
+        ]));
+        expect(env.hookCalls.filter((call) => call.name === `${MODULE_SHORT}.renderRoll`).map((call) => call.args[2])).toEqual([
+            "attack",
+            "damage",
+            "roll"
+        ]);
+    });
+
+    it("uses native damage rendering when dnd5e damage apply mode is selected", async () => {
+        env.settings.damageApplyMode = "dnd5e";
+
+        const damage = makeRoll(env.classes.DamageRoll, { formula: "1d10+3", total: 11, faces: 10, results: [8] });
+        const message = new env.classes.TestChatMessage({
+            type: "usage",
+            isAuthor: true,
+            isContentVisible: true,
+            flags: {
+                [MODULE_SHORT]: {
+                    quickRoll: true,
+                    processed: true,
+                    renderDamage: true,
+                    versatile: true,
+                    rolls: [damage]
+                },
+                dnd5e: { activity: { type: "damage" } }
+            }
+        });
+        const html = $(`<article><div class="message-content"><div class="card-buttons"><button data-action="rollDamage"></button></div></div></article>`);
+
+        await ChatUtility.processUsageChatMessage(message, html[0]);
+
+        expect(html.find(".rsr-section-damage")).toHaveLength(0);
+        expect(html.find(".rsr-damage-buttons-xl")).toHaveLength(0);
+        expect(html.find(".rsr-versatile-tag")).toHaveLength(1);
+        expect(env.hookCalls.filter((call) => call.name === `${MODULE_SHORT}.renderRoll`).map((call) => call.args[2])).toEqual(["damage"]);
+    });
+
+    it("merges child attack rolls into their originating usage card and deletes the child message", async () => {
+        const parentRoll = makeRoll(env.classes.D20Roll, { formula: "1d20+3", total: 14, faces: 20, results: [11] });
+        const childRoll = makeRoll(env.classes.D20Roll, { formula: "1d20+5", total: 19, faces: 20, results: [14] });
+        const parent = new env.classes.TestChatMessage({
+            id: "parent",
+            type: "usage",
+            isAuthor: true,
+            flags: {
+                [MODULE_SHORT]: {
+                    quickRoll: true,
+                    processed: true,
+                    rolls: [parentRoll]
+                }
+            }
+        });
+        const child = new env.classes.TestChatMessage({
+            id: "child",
+            type: "roll",
+            isAuthor: true,
+            rolls: [childRoll],
+            flags: {
+                [MODULE_SHORT]: {
+                    quickRoll: true,
+                    processed: true
+                },
+                dnd5e: { roll: { type: "attack" } }
+            },
+            getOriginatingMessage: () => parent
+        });
+        const html = $(`<article><div class="message-content"><div class="dice-roll"></div></div></article>`);
+
+        await ChatUtility.processChatMessage(child, html);
+
+        expect(child.deleted).toBe(true);
+        expect(parent.flags[MODULE_SHORT]).toMatchObject({
+            quickRoll: true,
+            renderAttack: true
+        });
+        expect(parent.flags[MODULE_SHORT].rolls.map((roll) => roll.class)).toEqual(["D20Roll", "D20Roll"]);
+        expect(parent.updatedWith).toMatchObject({ flavor: "vanilla" });
+        expect(child.flags[MODULE_SHORT].processed).toBe(false);
+    });
+});

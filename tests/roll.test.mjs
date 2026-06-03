@@ -243,4 +243,53 @@ describe("RollUtility.processActivity", () => {
         expect(inputs.dialogConfig.configure).toBe(false);
         expect(inputs.messageConfig.data.flags[MODULE_SHORT].quickRoll).toBe(true);
     });
+
+    it("stamps one-handed attackMode on quick versatile weapon rolls when the versatile key is not held", () => {
+        const inputs = activityInputs({
+            activity: {
+                item: { type: "weapon", system: { isVersatile: true } }
+            }
+        });
+
+        RollUtility.processActivity(inputs.activity, inputs.usageConfig, inputs.dialogConfig, inputs.messageConfig);
+
+        expect(inputs.messageConfig.data.flags[MODULE_SHORT]).toMatchObject({
+            quickRoll: true,
+            attackMode: "oneHanded",
+            versatile: false
+        });
+    });
+
+    it("stamps two-handed attackMode on quick versatile weapon rolls when the versatile key is held", () => {
+        state.pressed.versatileTwoHanded = true;
+        const inputs = activityInputs({
+            activity: {
+                item: { type: "weapon", system: { isVersatile: true } }
+            }
+        });
+
+        RollUtility.processActivity(inputs.activity, inputs.usageConfig, inputs.dialogConfig, inputs.messageConfig);
+
+        expect(inputs.messageConfig.data.flags[MODULE_SHORT]).toMatchObject({
+            quickRoll: true,
+            attackMode: "twoHanded",
+            versatile: true
+        });
+    });
+
+    it("does not stamp attackMode on slow versatile rolls because dnd5e owns that dialog path", () => {
+        state.pressed.skipDialogNormal = true;
+        state.pressed.versatileTwoHanded = true;
+        const inputs = activityInputs({
+            activity: {
+                item: { type: "weapon", system: { isVersatile: true } }
+            }
+        });
+
+        RollUtility.processActivity(inputs.activity, inputs.usageConfig, inputs.dialogConfig, inputs.messageConfig);
+
+        expect(inputs.dialogConfig.configure).toBe(true);
+        expect(inputs.messageConfig.data.flags[MODULE_SHORT].attackMode).toBeUndefined();
+        expect(inputs.messageConfig.data.flags[MODULE_SHORT].versatile).toBeUndefined();
+    });
 });
