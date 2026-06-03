@@ -11,15 +11,23 @@ const state = vi.hoisted(() => ({
         manualDamageMode: 0
     },
     logError: vi.fn(),
+    logWarning: vi.fn(),
     processActivity: vi.fn(),
     processRoll: vi.fn()
 }));
 
-vi.mock("../src/utils/activity.js", () => ({
-    ActivityUtility: {
-        _getActivityFromMessage: vi.fn((message) => message._activity ?? null)
-    }
-}));
+vi.mock("../src/utils/activity.js", async () => {
+    // Mock activity resolution, but route render-flag derivation through the real
+    // setRenderFlags so this stays an integration test of preCreate's single source
+    // of truth rather than a re-implementation of it.
+    const actual = await vi.importActual("../src/utils/activity.js");
+    return {
+        ActivityUtility: {
+            _getActivityFromMessage: vi.fn((message) => message._activity ?? null),
+            setRenderFlags: actual.ActivityUtility.setRenderFlags
+        }
+    };
+});
 
 vi.mock("../src/utils/settings.js", () => ({
     SETTING_NAMES: {
@@ -41,7 +49,8 @@ vi.mock("../src/utils/settings.js", () => ({
 vi.mock("../src/utils/log.js", () => ({
     LogUtility: {
         log: vi.fn(),
-        logError: state.logError
+        logError: state.logError,
+        logWarning: state.logWarning
     }
 }));
 
@@ -50,7 +59,7 @@ vi.mock("../src/utils/chat.js", () => ({ ChatUtility: { processChatMessage: vi.f
 vi.mock("../src/utils/reroll.js", () => ({ RerollManager: { registerGlobalListener: vi.fn() } }));
 vi.mock("../src/utils/roll.js", () => ({
     KEYBIND_VERSATILE_TWO_HANDED: "versatileTwoHanded",
-    ROLL_TYPE: { ATTACK: "attack" },
+    ROLL_TYPE: { ATTACK: "attack", DAMAGE: "damage", HEALING: "healing", FORMULA: "roll" },
     RollUtility: {
         processActivity: state.processActivity,
         processRoll: state.processRoll
@@ -102,6 +111,7 @@ describe("HooksUtility preCreateChatMessage quick-roll flags", () => {
             manualDamageMode: 0
         };
         state.logError.mockClear();
+        state.logWarning.mockClear();
         state.processActivity.mockClear();
         state.processRoll.mockClear();
     });
@@ -212,6 +222,29 @@ describe("HooksUtility preCreateChatMessage quick-roll flags", () => {
                 advantage: true
             }
         });
+        expect(state.logError).not.toHaveBeenCalled();
+    });
+
+    it("stamps base flags without render flags and warns when activity resolution fails in preCreate", () => {
+        // Regression: quickRoll already seeded (by processActivity), activity null in
+        // preCreate. The message must keep its claim (runActivityActions retries
+        // resolution at render time) but must NOT gain render flags it can't back,
+        // and the failure must be surfaced as a warning rather than swallowed.
+        const preCreate = registerPreCreateHook();
+        const message = usageMessage({
+            [MODULE_SHORT]: { quickRoll: true, processed: false }
+        });
+        // no message._activity — _getActivityFromMessage returns null
+
+        preCreate(message, {}, {}, "user-1");
+
+        expect(message.updateSource).toHaveBeenCalledTimes(1);
+        const written = message._updates[0][`flags.${MODULE_SHORT}`];
+        expect(written).toMatchObject({ quickRoll: true, processed: false });
+        expect(written).not.toHaveProperty("renderAttack");
+        expect(written).not.toHaveProperty("renderDamage");
+        expect(written).not.toHaveProperty("renderFormula");
+        expect(state.logWarning).toHaveBeenCalledTimes(1);
         expect(state.logError).not.toHaveBeenCalled();
     });
 

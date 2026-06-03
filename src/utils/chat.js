@@ -33,19 +33,6 @@ export class ChatUtility {
 
         const type = ChatUtility.getMessageType(message);
 
-        if (type === ROLL_TYPE.ACTIVITY && message.isAuthor) {
-            message.flags[MODULE_SHORT] = message.flags[MODULE_SHORT] || {};
-            if (message.flags[MODULE_SHORT].quickRoll === undefined) {
-                message.flags[MODULE_SHORT].quickRoll = !SettingsUtility.getSettingValue(SETTING_NAMES.QUICK_VANILLA_ENABLED);
-                message.flags[MODULE_SHORT].processed = false;
-
-                const activity = ActivityUtility._getActivityFromMessage(message);
-                if (activity) {
-                    ActivityUtility.setRenderFlags(activity, message);
-                }
-            }
-        }
-
         if (SettingsUtility.getSettingValue(SETTING_NAMES.QUICK_VANILLA_ENABLED) && (!message.flags[MODULE_SHORT] || !message.flags[MODULE_SHORT].quickRoll)) {
             _processVanillaMessage(message);
             await $(html).addClass("rsr-hide");

@@ -66,11 +66,7 @@ describe("ActivityUtility roll action flow", () => {
     });
 
     it("sets render flags from activity capabilities and manual damage mode", () => {
-        const message = {
-            flags: {
-                [MODULE_SHORT]: { quickRoll: true }
-            }
-        };
+        const flags = { quickRoll: true };
         env.settings.manualDamageMode = 1;
 
         ActivityUtility.setRenderFlags(
@@ -79,10 +75,10 @@ describe("ActivityUtility roll action flow", () => {
                 hasOwnProperty: Object.prototype.hasOwnProperty,
                 roll: { name: "Recharge" }
             },
-            message
+            flags
         );
 
-        expect(message.flags[MODULE_SHORT]).toMatchObject({
+        expect(flags).toMatchObject({
             renderAttack: true,
             manualDamage: true,
             renderDamage: false,
@@ -125,6 +121,63 @@ describe("ActivityUtility roll action flow", () => {
         ]);
         expect(message.updatedWith.flags).toBe(message.flags);
         expect(foundry.audio.AudioHelper.play).toHaveBeenCalledWith({ src: "dice.wav" }, true);
+    });
+
+    it("derives render flags at render time when preCreate activity resolution failed", async () => {
+        // Regression: a quick-roll message claimed by processActivity (quickRoll set,
+        // dnd5e subsequentActions already suppressed) arrives with no render flags
+        // because _getActivityFromMessage returned null during preCreate. The retry
+        // must re-resolve against the now-persisted document and fire the rolls
+        // instead of marking the message processed with nothing on it.
+        const attack = makeRoll(env.classes.D20Roll, { formula: "1d20+5", total: 18, faces: 20, results: [13] });
+        attack.isCritical = false;
+        const damage = makeRoll(env.classes.DamageRoll, { formula: "1d8+3", total: 7, faces: 8, results: [4] });
+        const message = new env.classes.TestChatMessage({
+            id: "usage-retry",
+            flags: {
+                [MODULE_SHORT]: { quickRoll: true, processed: false }
+            }
+        });
+
+        vi.spyOn(ActivityUtility, "_getActivityFromMessage").mockReturnValue({
+            type: "attack",
+            hasOwnProperty: Object.prototype.hasOwnProperty
+        });
+        vi.spyOn(ActivityUtility, "getAttackFromMessage").mockResolvedValue([attack]);
+        vi.spyOn(ActivityUtility, "getDamageFromMessage").mockResolvedValue([damage]);
+
+        await ActivityUtility.runActivityActions(message);
+
+        expect(message.flags[MODULE_SHORT]).toMatchObject({
+            renderAttack: true,
+            renderDamage: true,
+            processed: true
+        });
+        expect(message.flags[MODULE_SHORT].rolls.map((roll) => roll.class)).toEqual([
+            "D20Roll",
+            "DamageRoll"
+        ]);
+    });
+
+    it("marks an unresolvable claimed message processed without inventing render flags", async () => {
+        // If the retry also fails, the message must settle (processed: true, no
+        // re-render loop) and stay roll-less rather than crash or guess flags.
+        const message = new env.classes.TestChatMessage({
+            id: "usage-unresolvable",
+            flags: {
+                [MODULE_SHORT]: { quickRoll: true, processed: false }
+            }
+        });
+
+        vi.spyOn(ActivityUtility, "_getActivityFromMessage").mockReturnValue(null);
+        const getAttack = vi.spyOn(ActivityUtility, "getAttackFromMessage");
+
+        await ActivityUtility.runActivityActions(message);
+
+        expect(message.flags[MODULE_SHORT].processed).toBe(true);
+        expect(message.flags[MODULE_SHORT]).not.toHaveProperty("renderAttack");
+        expect(message.flags[MODULE_SHORT].rolls).toEqual([]);
+        expect(getAttack).not.toHaveBeenCalled();
     });
 
     it("passes advantage, ammunition, and attackMode into rollAttack", () => {

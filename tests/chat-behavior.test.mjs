@@ -1,9 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeRoll, setupFoundryEnv } from "./helpers/foundry-env.mjs";
 
 describe("ChatUtility message lifecycle behavior", () => {
     let env;
     let ChatUtility;
+    let ActivityUtility;
     let MODULE_SHORT;
 
     beforeEach(async () => {
@@ -11,6 +12,70 @@ describe("ChatUtility message lifecycle behavior", () => {
         env = await setupFoundryEnv();
         ({ MODULE_SHORT } = await import("../src/module/const.js"));
         ({ ChatUtility } = await import("../src/utils/chat.js"));
+        ({ ActivityUtility } = await import("../src/utils/activity.js"));
+    });
+
+    afterEach(() => {
+        // Explicit teardown so spy isolation does not depend on resetModules()
+        // happening to orphan the previous module's spies.
+        vi.restoreAllMocks();
+    });
+
+    it("does not process legacy usage messages without rsreforged flags (issue #15)", async () => {
+        const activity = { type: "attack", hasOwnProperty: Object.prototype.hasOwnProperty };
+        const message = new env.classes.TestChatMessage({
+            type: "usage",
+            isAuthor: true,
+            flags: { dnd5e: { activity: { type: "attack", id: "activity-1" } } },
+            getAssociatedActivity: () => activity
+        });
+        const html = $(`<article class="chat-message"><div class="message-content"><div class="card-buttons"><button data-action="rollAttack"></button></div></div></article>`);
+
+        const setRenderFlags = vi.spyOn(ActivityUtility, "setRenderFlags");
+        const runActivityActions = vi.spyOn(ActivityUtility, "runActivityActions").mockResolvedValue(undefined);
+        const updateChatMessage = vi.spyOn(ChatUtility, "updateChatMessage");
+
+        await ChatUtility.processChatMessage(message, html);
+
+        expect(message.flags[MODULE_SHORT]).toBeUndefined();
+        expect(setRenderFlags).not.toHaveBeenCalled();
+        expect(runActivityActions).not.toHaveBeenCalled();
+        expect(updateChatMessage).not.toHaveBeenCalled();
+        expect(message.updatedWith).toBeUndefined();
+        expect(html.hasClass("rsr-hide")).toBe(false);
+    });
+
+    it("runs activity actions once for creation-stamped unprocessed usage messages", async () => {
+        // Forward-path complement to the issue #15 test above: a message that WAS
+        // stamped at creation (quickRoll + render flags present) must still drive the
+        // quick-roll pipeline. Render flags are consumed as-is — processChatMessage must
+        // never re-derive them at render time (that retroactive stamping was the #15 bug),
+        // so setRenderFlags must NOT be called here.
+        const message = new env.classes.TestChatMessage({
+            type: "usage",
+            isAuthor: true,
+            flags: {
+                [MODULE_SHORT]: {
+                    quickRoll: true,
+                    processed: false,
+                    renderAttack: true
+                },
+                dnd5e: { activity: { type: "attack" } }
+            }
+        });
+        const html = $(`<article class="chat-message"><div class="message-content"></div></article>`);
+
+        const setRenderFlags = vi.spyOn(ActivityUtility, "setRenderFlags");
+        const runActivityActions = vi.spyOn(ActivityUtility, "runActivityActions").mockResolvedValue(undefined);
+
+        await ChatUtility.processChatMessage(message, html);
+
+        expect(runActivityActions).toHaveBeenCalledTimes(1);
+        expect(runActivityActions).toHaveBeenCalledWith(message);
+        expect(setRenderFlags).not.toHaveBeenCalled();
+        // quickRoll preserved, not rewritten by the vanilla path.
+        expect(message.flags[MODULE_SHORT].quickRoll).toBe(true);
+        expect(html.hasClass("rsr-hide")).toBe(true);
     });
 
     it("renders processed usage cards after dnd5e has produced stable card HTML", async () => {

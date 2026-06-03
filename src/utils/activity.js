@@ -92,15 +92,24 @@ export class ActivityUtility {
     }
 
     /**
-     * Set RSR render flags on the message based on the activity's capabilities.
-     * Called from processChatMessage when flags haven't been written yet (i.e. the
-     * message was not caught by preCreateChatMessage, which can happen when another
-     * module creates a usage message programmatically after the fact).
+     * Derive RSR render flags (renderAttack / renderDamage / renderFormula / isHealing /
+     * formulaName) from an activity's capabilities and write them onto the given RSR
+     * flags object. Mutates `flags` in place; a no-op unless `flags.quickRoll` is set.
+     *
+     * Single source of truth for creation-time render-flag derivation: called from the
+     * preCreateChatMessage hook (hooks.js) after the base quickRoll/processed flags are
+     * seeded. Deliberately NOT called during chat re-render — legacy usage messages that
+     * were never stamped at creation must stay passive rather than be pulled into the
+     * quick-roll pipeline retroactively (see issue #15). The one exception is the
+     * guarded retry at the top of runActivityActions, which only fires for messages
+     * RSR itself claimed at creation (quickRoll set, not yet processed) whose activity
+     * could not be resolved during preCreate.
+     *
+     * @param {object} activity The dnd5e activity resolved for the message.
+     * @param {object} flags    The message's `flags[MODULE_SHORT]` object to mutate.
      */
-    static setRenderFlags(activity, message) {
-        if (!message || !activity) return;
-        const flags = message.flags;
-        if (!flags || !flags[MODULE_SHORT] || !flags[MODULE_SHORT].quickRoll) return;
+    static setRenderFlags(activity, flags) {
+        if (!activity || !flags || !flags.quickRoll) return;
 
         const hasAttack  = activity.type === "attack"  || !!activity.attack   || activity.hasOwnProperty(ROLL_TYPE.ATTACK);
         const hasDamage  = activity.type === "damage"  || !!activity.damage   || activity.type === "attack" || activity.type === "save" || activity.hasOwnProperty(ROLL_TYPE.DAMAGE);
@@ -108,26 +117,26 @@ export class ActivityUtility {
         const hasFormula = activity.type === "utility" || !!activity.roll     || activity.hasOwnProperty(ROLL_TYPE.FORMULA);
 
         if (hasAttack) {
-            flags[MODULE_SHORT].renderAttack = true;
+            flags.renderAttack = true;
         }
 
         const manualDamageMode = SettingsUtility.getSettingValue(SETTING_NAMES.MANUAL_DAMAGE_MODE);
 
         if (hasDamage) {
-            flags[MODULE_SHORT].manualDamage = (manualDamageMode === 2 || (manualDamageMode === 1 && hasAttack));
-            flags[MODULE_SHORT].renderDamage = !flags[MODULE_SHORT].manualDamage;
+            flags.manualDamage = (manualDamageMode === 2 || (manualDamageMode === 1 && hasAttack));
+            flags.renderDamage = !flags.manualDamage;
         }
 
         if (hasHealing) {
-            flags[MODULE_SHORT].isHealing = true;
-            flags[MODULE_SHORT].renderDamage = true;
+            flags.isHealing = true;
+            flags.renderDamage = true;
         }
 
         if (hasFormula) {
-            flags[MODULE_SHORT].renderFormula = true;
+            flags.renderFormula = true;
             const fName = activity.roll?.name || activity[ROLL_TYPE.FORMULA]?.name;
             if (fName && fName !== "") {
-                flags[MODULE_SHORT].formulaName = fName;
+                flags.formulaName = fName;
             }
         }
     }
@@ -137,7 +146,27 @@ export class ActivityUtility {
      * and persist the resulting rolls back to the message flags.
      */
     static async runActivityActions(message) {
-        let currentRolls = Array.from(message.flags[MODULE_SHORT]?.rolls || []);
+        const flags = message.flags[MODULE_SHORT] ?? (message.flags[MODULE_SHORT] = {});
+
+        // Render-time retry for preCreate resolution failures. preCreate sees the
+        // message before it is persisted, so the UUID fallbacks in
+        // _getActivityFromMessage can miss and the message arrives here claimed
+        // (quickRoll set by processActivity, which already suppressed dnd5e's
+        // subsequentActions) but without render flags — and would otherwise be
+        // marked processed with zero rolls. By now the message is a full document
+        // with getAssociatedActivity available, so resolution that failed at
+        // preCreate normally succeeds. Legacy messages (issue #15) cannot reach
+        // this: runActivityActions only runs when quickRoll is set and the message
+        // is unprocessed. If the activity has no rollable parts, setRenderFlags is
+        // an idempotent no-op and the message stays passive as before.
+        if (!flags.renderAttack && !flags.renderDamage && !flags.renderFormula && !flags.manualDamage) {
+            const activity = ActivityUtility._getActivityFromMessage(message);
+            if (activity) {
+                ActivityUtility.setRenderFlags(activity, flags);
+            }
+        }
+
+        let currentRolls = Array.from(flags.rolls || []);
         const newRolls = [];
 
         if (message.flags[MODULE_SHORT].renderAttack) {
