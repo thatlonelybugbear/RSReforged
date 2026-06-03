@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Weapon-mastery supplements now survive the quick-roll merge that deletes the child attack message.** Follow-up to [#13](https://github.com/arrowedisgaming/RSReforged/issues/13): the 4.7.1 fix preserved `.supplement` content on standalone cards, but on a quick-rolled activity the attack roll arrives as a *separate* dnd5e message whose mastery anchor RSR merges into the parent activity card before deleting the child — so the supplement (and the roll itself) were lost on the way over. RSR now snapshots the child's rendered `.supplement` HTML onto `flags.rsreforged.supplements[type]` before the merge (`_storeSupplementsForMerge` / `_snapshotSupplements` in `src/utils/chat.js`), then re-hydrates it under the matching `.rsr-section-attack` / `.rsr-section-damage` host on the parent's next render (`_restoreStoredSupplements`). Restored nodes carry `data-rsr-restored-supplement` and are cleared-then-rebuilt each render so repeated `message.update()` re-renders stay idempotent. When mastery metadata is present but no supplement survived, RSR generates a native-style mastery content-link as a fallback (`_restoreMasterySupplement`), running *after* the live supplement placement pass and de-duplicating by `data-uuid` / `data-tooltip` so it never doubles up an anchor dnd5e already rendered; the link label is resolved through `CONFIG.DND5E.weaponMasteries[...].label` and localized so `fr` / `pt-BR` installs match dnd5e's native display.
+- **Merged quick-activity rolls are now synced onto the parent `ChatMessage.rolls` collection** on both the quick-roll path (`ActivityUtility.runActivityActions`) and the manual damage-button path (`ActivityUtility.runActivityAction`) in `src/utils/activity.js`, so the rolls collection no longer goes stale relative to `flags.rsreforged.rolls` after a manual damage click. The attack roll's `mastery` is also copied onto `flags.dnd5e.roll`, so wm5e's click handlers resolve the mastery off the merged card instead of the deleted child.
+
 ## [4.7.1] — 2026-06-02
 
 ### Fixed

@@ -190,10 +190,22 @@ export class ActivityUtility {
         }
 
         message.flags[MODULE_SHORT].processed = true;
-        message.flags[MODULE_SHORT].rolls = currentRolls.map(r => r.toJSON ? r.toJSON() : r);
+        const serializedRolls = currentRolls.map(r => r.toJSON ? r.toJSON() : r);
+        message.flags[MODULE_SHORT].rolls = serializedRolls;
+
+        const attackRoll = currentRolls.find(r => r instanceof CONFIG.Dice.D20Roll || r.class === "D20Roll" || r.constructor?.name === "D20Roll");
+        if (attackRoll) {
+            message.flags.dnd5e ??= {};
+            message.flags.dnd5e.roll = {
+                ...(message.flags.dnd5e.roll ?? {}),
+                type: ROLL_TYPE.ATTACK,
+                ...(attackRoll.options?.mastery ? { mastery: attackRoll.options.mastery } : {})
+            };
+        }
 
         await ChatUtility.updateChatMessage(message, {
-            flags: message.flags
+            flags: message.flags,
+            rolls: serializedRolls
         });
     }
 
@@ -228,10 +240,12 @@ export class ActivityUtility {
             }
         }
 
-        message.flags[MODULE_SHORT].rolls = currentRolls.map(r => r.toJSON ? r.toJSON() : r);
+        const serializedRolls = currentRolls.map(r => r.toJSON ? r.toJSON() : r);
+        message.flags[MODULE_SHORT].rolls = serializedRolls;
 
         await ChatUtility.updateChatMessage(message, {
-            flags: message.flags
+            flags: message.flags,
+            rolls: serializedRolls
         });
     }
 
