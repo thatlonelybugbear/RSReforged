@@ -1,0 +1,269 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { makeRoll, setupFoundryEnv } from "./helpers/foundry-env.mjs";
+
+describe("ActivityUtility roll action flow", () => {
+    let env;
+    let ActivityUtility;
+    let MODULE_SHORT;
+
+    beforeEach(async () => {
+        vi.resetModules();
+        env = await setupFoundryEnv();
+        ({ MODULE_SHORT } = await import("../src/module/const.js"));
+        ({ ActivityUtility } = await import("../src/utils/activity.js"));
+    });
+
+    it("resolves activities from native message methods before manual fallbacks", () => {
+        const nativeActivity = { id: "native" };
+        const itemActivity = { id: "item" };
+        const message = {
+            getAssociatedActivity: vi.fn(() => nativeActivity),
+            getAssociatedItem: vi.fn(() => ({
+                system: { activities: new Map([["activity-1", itemActivity]]) }
+            })),
+            flags: { dnd5e: { activity: { id: "activity-1" } } }
+        };
+
+        expect(ActivityUtility._getActivityFromMessage(message)).toBe(nativeActivity);
+        expect(message.getAssociatedItem).not.toHaveBeenCalled();
+    });
+
+    it("resolves activities from associated items and activity UUID flags when native methods are absent", () => {
+        const itemActivity = { id: "item" };
+        const uuidActivity = { id: "uuid" };
+
+        expect(ActivityUtility._getActivityFromMessage({
+            getAssociatedItem: () => ({
+                system: { activities: new Map([["activity-1", itemActivity]]) }
+            }),
+            flags: { dnd5e: { activity: { id: "activity-1" } } }
+        })).toBe(itemActivity);
+
+        globalThis.fromUuidSync.mockReturnValue(uuidActivity);
+        expect(ActivityUtility._getActivityFromMessage({
+            flags: { dnd5e: { activity: { uuid: "Activity.uuid" } } }
+        })).toBe(uuidActivity);
+    });
+
+    it("extracts rolls from common dnd5e return shapes", () => {
+        const direct = makeRoll(env.classes.D20Roll, { formula: "1d20", total: 10, faces: 20, results: [10] });
+        const nested = makeRoll(env.classes.DamageRoll, { formula: "1d8", total: 6, faces: 8, results: [6] });
+        const single = makeRoll(env.classes.BasicRoll, { formula: "1d6", total: 4, faces: 6, results: [4] });
+        const serialized = single.toJSON();
+
+        expect(ActivityUtility._extractRolls([
+            direct,
+            { rolls: [nested] },
+            { roll: single },
+            serialized,
+            null
+        ]).map((roll) => roll.constructor.name)).toEqual([
+            "D20Roll",
+            "DamageRoll",
+            "BasicRoll",
+            "BasicRoll"
+        ]);
+    });
+
+    it("sets render flags from activity capabilities and manual damage mode", () => {
+        const flags = { quickRoll: true };
+        env.settings.manualDamageMode = 1;
+
+        ActivityUtility.setRenderFlags(
+            {
+                type: "attack",
+                hasOwnProperty: Object.prototype.hasOwnProperty,
+                roll: { name: "Recharge" }
+            },
+            flags
+        );
+
+        expect(flags).toMatchObject({
+            renderAttack: true,
+            manualDamage: true,
+            renderDamage: false,
+            renderFormula: true,
+            formulaName: "Recharge"
+        });
+    });
+
+    it("runs attack, damage, and formula actions, then persists serialized rolls to the message", async () => {
+        const attack = makeRoll(env.classes.D20Roll, { formula: "1d20+5", total: 22, faces: 20, results: [17] });
+        attack.isCritical = true;
+        const damage = makeRoll(env.classes.DamageRoll, { formula: "1d8+3", total: 8, faces: 8, results: [5] });
+        const formula = makeRoll(env.classes.BasicRoll, { formula: "1d6", total: 4, faces: 6, results: [4] });
+        const message = new env.classes.TestChatMessage({
+            id: "usage-1",
+            flags: {
+                [MODULE_SHORT]: {
+                    renderAttack: true,
+                    renderDamage: true,
+                    renderFormula: true,
+                    rolls: []
+                }
+            }
+        });
+
+        vi.spyOn(ActivityUtility, "getAttackFromMessage").mockResolvedValue([attack]);
+        vi.spyOn(ActivityUtility, "getDamageFromMessage").mockResolvedValue([damage]);
+        vi.spyOn(ActivityUtility, "getFormulaFromMessage").mockResolvedValue([formula]);
+
+        await ActivityUtility.runActivityActions(message);
+
+        expect(message.flags[MODULE_SHORT]).toMatchObject({
+            processed: true,
+            isCritical: true
+        });
+        expect(message.flags[MODULE_SHORT].rolls.map((roll) => roll.class)).toEqual([
+            "D20Roll",
+            "DamageRoll",
+            "BasicRoll"
+        ]);
+        expect(message.updatedWith.flags).toBe(message.flags);
+        expect(foundry.audio.AudioHelper.play).toHaveBeenCalledWith({ src: "dice.wav" }, true);
+    });
+
+    it("derives render flags at render time when preCreate activity resolution failed", async () => {
+        // Regression: a quick-roll message claimed by processActivity (quickRoll set,
+        // dnd5e subsequentActions already suppressed) arrives with no render flags
+        // because _getActivityFromMessage returned null during preCreate. The retry
+        // must re-resolve against the now-persisted document and fire the rolls
+        // instead of marking the message processed with nothing on it.
+        const attack = makeRoll(env.classes.D20Roll, { formula: "1d20+5", total: 18, faces: 20, results: [13] });
+        attack.isCritical = false;
+        const damage = makeRoll(env.classes.DamageRoll, { formula: "1d8+3", total: 7, faces: 8, results: [4] });
+        const message = new env.classes.TestChatMessage({
+            id: "usage-retry",
+            flags: {
+                [MODULE_SHORT]: { quickRoll: true, processed: false }
+            }
+        });
+
+        vi.spyOn(ActivityUtility, "_getActivityFromMessage").mockReturnValue({
+            type: "attack",
+            hasOwnProperty: Object.prototype.hasOwnProperty
+        });
+        vi.spyOn(ActivityUtility, "getAttackFromMessage").mockResolvedValue([attack]);
+        vi.spyOn(ActivityUtility, "getDamageFromMessage").mockResolvedValue([damage]);
+
+        await ActivityUtility.runActivityActions(message);
+
+        expect(message.flags[MODULE_SHORT]).toMatchObject({
+            renderAttack: true,
+            renderDamage: true,
+            processed: true
+        });
+        expect(message.flags[MODULE_SHORT].rolls.map((roll) => roll.class)).toEqual([
+            "D20Roll",
+            "DamageRoll"
+        ]);
+    });
+
+    it("marks an unresolvable claimed message processed without inventing render flags", async () => {
+        // If the retry also fails, the message must settle (processed: true, no
+        // re-render loop) and stay roll-less rather than crash or guess flags.
+        const message = new env.classes.TestChatMessage({
+            id: "usage-unresolvable",
+            flags: {
+                [MODULE_SHORT]: { quickRoll: true, processed: false }
+            }
+        });
+
+        vi.spyOn(ActivityUtility, "_getActivityFromMessage").mockReturnValue(null);
+        const getAttack = vi.spyOn(ActivityUtility, "getAttackFromMessage");
+
+        await ActivityUtility.runActivityActions(message);
+
+        expect(message.flags[MODULE_SHORT].processed).toBe(true);
+        expect(message.flags[MODULE_SHORT]).not.toHaveProperty("renderAttack");
+        expect(message.flags[MODULE_SHORT].rolls).toEqual([]);
+        expect(getAttack).not.toHaveBeenCalled();
+    });
+
+    it("passes advantage, ammunition, and attackMode into rollAttack", () => {
+        const rollAttack = vi.fn(() => []);
+        const activity = { rollAttack };
+        vi.spyOn(ActivityUtility, "_getActivityFromMessage").mockReturnValue(activity);
+
+        const message = {
+            flags: {
+                [MODULE_SHORT]: {
+                    advantage: true,
+                    disadvantage: false,
+                    ammunition: "arrow-1",
+                    attackMode: "twoHanded"
+                }
+            }
+        };
+
+        ActivityUtility.getAttackFromMessage(message);
+
+        expect(rollAttack).toHaveBeenCalledWith(
+            {
+                advantage: true,
+                disadvantage: false,
+                ammunition: "arrow-1",
+                attackMode: "twoHanded"
+            },
+            { configure: false },
+            expect.objectContaining({
+                create: false,
+                flags: { [MODULE_SHORT]: { quickRoll: true } }
+            })
+        );
+    });
+
+    it("passes scaling, resolved ammunition, critical state, attackMode, and Midi options into rollDamage", async () => {
+        vi.resetModules();
+        env = await setupFoundryEnv({ modules: { "midi-qol": true } });
+        ({ MODULE_SHORT } = await import("../src/module/const.js"));
+        ({ ActivityUtility } = await import("../src/utils/activity.js"));
+
+        const ammo = { id: "arrow-1", name: "Arrow" };
+        const actor = { items: { get: vi.fn(() => ammo) } };
+        const rollDamage = vi.fn(() => []);
+        const getDamageConfig = vi.fn(() => ({ rolls: [{ parts: ["1d8"] }] }));
+        const activity = {
+            rollDamage,
+            getDamageConfig,
+            item: { flags: { dnd5e: {} } }
+        };
+
+        vi.spyOn(ActivityUtility, "_getActivityFromMessage").mockReturnValue(activity);
+        vi.spyOn(ActivityUtility, "_getActorFromMessage").mockReturnValue(actor);
+
+        const message = {
+            system: { scaling: 2 },
+            flags: {
+                [MODULE_SHORT]: {
+                    isCritical: true,
+                    ammunition: "arrow-1",
+                    attackMode: "twoHanded"
+                }
+            }
+        };
+
+        ActivityUtility.getDamageFromMessage(message);
+
+        const expectedConfig = {
+            isCritical: true,
+            ammunition: ammo,
+            scaling: 2,
+            attackMode: "twoHanded",
+            midiOptions: {
+                isCritical: true,
+                attackMode: "twoHanded"
+            }
+        };
+        expect(getDamageConfig).toHaveBeenCalledWith(expectedConfig);
+        expect(rollDamage).toHaveBeenCalledWith(
+            expectedConfig,
+            { configure: false },
+            expect.objectContaining({
+                create: false,
+                flags: { [MODULE_SHORT]: { quickRoll: true } }
+            })
+        );
+        expect(activity.item.flags.dnd5e.scaling).toBe(2);
+    });
+});

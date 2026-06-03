@@ -33,19 +33,6 @@ export class ChatUtility {
 
         const type = ChatUtility.getMessageType(message);
 
-        if (type === ROLL_TYPE.ACTIVITY && message.isAuthor) {
-            message.flags[MODULE_SHORT] = message.flags[MODULE_SHORT] || {};
-            if (message.flags[MODULE_SHORT].quickRoll === undefined) {
-                message.flags[MODULE_SHORT].quickRoll = !SettingsUtility.getSettingValue(SETTING_NAMES.QUICK_VANILLA_ENABLED);
-                message.flags[MODULE_SHORT].processed = false;
-
-                const activity = ActivityUtility._getActivityFromMessage(message);
-                if (activity) {
-                    ActivityUtility.setRenderFlags(activity, message);
-                }
-            }
-        }
-
         if (SettingsUtility.getSettingValue(SETTING_NAMES.QUICK_VANILLA_ENABLED) && (!message.flags[MODULE_SHORT] || !message.flags[MODULE_SHORT].quickRoll)) {
             _processVanillaMessage(message);
             await $(html).addClass("rsr-hide");
@@ -362,6 +349,97 @@ function _safeInsert(sectionHTML, targetHTML) {
     }
 }
 
+function _snapshotSupplements(html) {
+    return html.find('.supplement').map((_, element) => element.outerHTML).get().filter(Boolean);
+}
+
+function _storeSupplementsForMerge(parent, type, html) {
+    parent.flags[MODULE_SHORT].supplements ??= {};
+    parent.flags[MODULE_SHORT].supplements[type] = _snapshotSupplements(html);
+}
+
+function _getRollMastery(message) {
+    const roll = ChatUtility.getMessageRolls(message).find(r => r instanceof CONFIG.Dice.D20Roll || r.class === "D20Roll" || r.constructor?.name === "D20Roll");
+    const activity = ActivityUtility._getActivityFromMessage(message);
+    const mastery = message.flags?.dnd5e?.roll?.mastery ?? message.system?.roll?.mastery ?? roll?.options?.mastery ?? activity?.item?.system?.mastery;
+    return typeof mastery === "string" ? mastery.toLowerCase() : "";
+}
+
+function _getMasteryLabel(mastery) {
+    const label = CONFIG.DND5E?.weaponMasteries?.[mastery]?.label;
+    if (label) return CoreUtility.localize(label);
+    if (!mastery) return "";
+    return `${mastery[0].toUpperCase()}${mastery.slice(1)}`;
+}
+
+function _getMasteryReference(mastery) {
+    const reference = CONFIG.DND5E?.weaponMasteries?.[mastery];
+    return reference?.reference ?? reference?.uuid ?? "";
+}
+
+function _createMasterySupplement({ mastery, label, uuid }) {
+    if (!label || !uuid) return null;
+
+    const docType = uuid.startsWith('JournalEntryPage.') ? 'JournalEntryPage' : 'JournalEntry';
+    const supplement = $('<p class="supplement"></p>');
+    supplement.append($('<strong></strong>').text('Mastery: '));
+
+    const link = $('<a class="content-link"></a>');
+    link.attr({
+        draggable: "true",
+        "data-link": "",
+        "data-type": docType,
+        "data-uuid": uuid,
+        "data-tooltip": label,
+        "data-tooltip-direction": "UP",
+        "aria-label": `${label} weapon mastery`
+    });
+    link.text(label);
+    supplement.append(link);
+
+    return supplement[0].outerHTML;
+}
+
+function _restoreMasterySupplement(message, host) {
+    if (!host?.length) return;
+
+    const mastery = _getRollMastery(message);
+    const label = _getMasteryLabel(mastery);
+    const uuid = _getMasteryReference(mastery);
+    if (!label || !uuid) return;
+
+    const existing = host.find('.supplement a').filter((_, element) => {
+        return element.dataset?.tooltip === label || element.dataset?.uuid === uuid;
+    });
+    if (existing.length) return;
+
+    const supplement = $(_createMasterySupplement({ mastery, label, uuid }));
+    supplement.attr('data-rsr-generated-mastery', mastery);
+    supplement.addClass('rsr-supplement');
+    host.append(supplement);
+}
+
+function _restoreStoredSupplements(message, html) {
+    const supplements = message.flags?.[MODULE_SHORT]?.supplements ?? {};
+
+    html.find('[data-rsr-restored-supplement], [data-rsr-generated-mastery]').remove();
+
+    const hosts = {
+        [ROLL_TYPE.ATTACK]: html.find('.rsr-section-attack'),
+        [ROLL_TYPE.DAMAGE]: html.find('.rsr-section-damage')
+    };
+
+    for (const [type, snippets] of Object.entries(supplements)) {
+        const host = hosts[type];
+        if (!host?.length || !Array.isArray(snippets) || snippets.length === 0) continue;
+
+        const restored = $(snippets.join(""));
+        restored.attr('data-rsr-restored-supplement', type);
+        restored.addClass('rsr-supplement');
+        host.append(restored);
+    }
+}
+
 async function _injectContent(message, type, html) {
     LogUtility.log("Injecting content into chat message");
 
@@ -412,6 +490,8 @@ async function _injectContent(message, type, html) {
         case ROLL_TYPE.ATTACK:
             if (parent && parent.flags[MODULE_SHORT] && message.isAuthor) {
                 parent.flags.dnd5e ??= {};
+                _storeSupplementsForMerge(parent, type, html);
+
                 if (type === ROLL_TYPE.ATTACK) {
                     parent.flags[MODULE_SHORT].renderAttack = true;
                     // dnd5e 5.3.0: roll data lives in flags.dnd5e.roll; system.roll is
@@ -440,10 +520,12 @@ async function _injectContent(message, type, html) {
                 let newMsgRolls = ChatUtility.getMessageRolls(message);
                 newParentRolls.push(...newMsgRolls);
 
-                parent.flags[MODULE_SHORT].rolls = newParentRolls.map(r => r.toJSON ? r.toJSON() : r);
+                const serializedRolls = newParentRolls.map(r => r.toJSON ? r.toJSON() : r);
+                parent.flags[MODULE_SHORT].rolls = serializedRolls;
 
                 ChatUtility.updateChatMessage(parent, {
                     flags: parent.flags,
+                    rolls: serializedRolls,
                     flavor: "vanilla",
                 });
 
@@ -492,16 +574,21 @@ async function _injectContent(message, type, html) {
                 || message.flags[MODULE_SHORT].renderAttack
                 || message.flags[MODULE_SHORT].renderFormula
                 || message.flags[MODULE_SHORT].renderDamage) {
+                // Rescue dnd5e-injected supplements (mastery anchors, damage-on-save
+                // notes, legendary-resistance flags from _enrichAttackTargets et al.)
+                // off chat-cards we're about to remove, before the strip. Parked at
+                // html root so the post-inject rescue below can move them under
+                // .rsr-section-attack alongside supplements that survived the strip
+                // in their original location.
+                const doomed = html.find('.dnd5e2.chat-card').not('.activation-card, .usage-card');
+                doomed.find('.supplement').appendTo(html);
                 html.find('.dice-roll').remove();
-                html.find('.dnd5e2.chat-card').not('.activation-card, .usage-card').remove();
+                doomed.remove();
             }
 
             if (message.flags[MODULE_SHORT].renderAttack || message.flags[MODULE_SHORT].renderAttack === false) {
                 html.find('[data-action=rollAttack], [data-action=attack]').remove();
                 await _injectAttackRoll(message, actions, { contentHtml: html });
-
-                html.find('.rsr-section-attack').append(html.find('.supplement'));
-                html.find('.supplement').removeClass('supplement').addClass('rsr-supplement');
             }
 
             if (message.flags[MODULE_SHORT].manualDamage || message.flags[MODULE_SHORT].renderDamage) {
@@ -526,6 +613,31 @@ async function _injectContent(message, type, html) {
                 await _injectApplyDamageButtons(message, html);
                 const rootParent = html.closest('.message-content');
                 if (rootParent.length) rootParent.find('> .dice-roll').remove();
+            }
+
+            // Place surviving + rescued dnd5e supplements (mastery anchors,
+            // damage-on-save notes, legendary-resistance flags) into the most
+            // specific RSR section that exists for this card. Runs after all
+            // injects so we have a complete picture of which sections were
+            // created. Add .rsr-supplement for RSR's own styling
+            // (css/rsreforged.css) but keep the original .supplement class so
+            // downstream modules and dnd5e's own enrichers continue to find
+            // them. The host-narrowed selector on the addClass step prevents
+            // double-tagging supplements inside surviving .activation-card /
+            // .usage-card subtrees that RSR's strip explicitly preserves.
+            _restoreStoredSupplements(message, html);
+
+            let supplementHost = html.find('.rsr-section-attack');
+            if (!supplementHost.length) supplementHost = html.find('.rsr-section-damage');
+            if (!supplementHost.length) supplementHost = html.find('.rsr-section-formula');
+            if (supplementHost.length) {
+                // Sweep loose supplements into the host, but leave restored
+                // snapshots where _restoreStoredSupplements already placed them
+                // (e.g. damage-on-save notes under .rsr-section-damage) — otherwise
+                // this attack-preferring sweep would relocate them to the wrong section.
+                supplementHost.append(html.find('.supplement').not(supplementHost.find('.supplement')).not('[data-rsr-restored-supplement]'));
+                supplementHost.find('.supplement').addClass('rsr-supplement');
+                _restoreMasterySupplement(message, supplementHost);
             }
             break;
         }

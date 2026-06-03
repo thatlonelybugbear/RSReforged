@@ -3,9 +3,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "devDependencies": {
-    "vitest": "^4.1.6"
+    "@vitest/coverage-v8": "^4.1.8",
+    "jquery": "^4.0.0",
+    "jsdom": "^29.1.1",
+    "vitest": "^4.1.8"
   }
 }

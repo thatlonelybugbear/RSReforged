@@ -186,6 +186,8 @@ Why `Map` instead of `WeakMap`: in the merge path, the key is a string id, not t
 
 **When does the merge case actually fire?** Quick-roll attacks and damage rolls on activities that RSR is handling. Plain skill checks, saves, and tool checks don't merge — `preRender` and `renderRoll` (if it fires) run on the same message, so the parent-resolution helper returns `message.id` and the code path collapses to the simple case.
 
+**`.supplement` preservation (4.7.1+).** RSR now keeps dnd5e's `<p class="supplement">` wrappers across the rebuild — including the mastery anchors, damage-on-save notes, and legendary-resistance flags that `_enrichAttackTargets` and friends attach. Surviving and rescued supplements end up under `.rsr-section-attack` carrying *both* `.supplement` (original) and `.rsr-supplement` (for RSR's own styling). Modules that previously had to walk the inner anchors individually (as the snapshot/re-attach example above does) can now also query `.supplement` directly on the rebuilt DOM. The example above still works and is more defensive than relying on the wrapper — keep using it if you want belt-and-braces preservation, especially for module-specific decorations that live alongside dnd5e's content inside the supplement.
+
 ---
 
 ## Worked Example 2: Re-apply tooltips on save buttons

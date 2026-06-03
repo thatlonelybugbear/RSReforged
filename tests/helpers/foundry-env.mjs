@@ -1,0 +1,448 @@
+import { vi } from "vitest";
+import { JSDOM } from "jsdom";
+
+let jqueryModule = null;
+let sharedDom = null;
+
+export async function setupFoundryEnv(options = {}) {
+    sharedDom ??= new JSDOM("<!doctype html><html><body></body></html>");
+    const dom = sharedDom;
+    dom.window.document.body.innerHTML = "";
+    globalThis.window = dom.window;
+    globalThis.document = dom.window.document;
+    globalThis.HTMLElement = dom.window.HTMLElement;
+    globalThis.MutationObserver = dom.window.MutationObserver;
+
+    jqueryModule ??= await import("jquery");
+    globalThis.$ = jqueryModule.default;
+    globalThis.jQuery = jqueryModule.default;
+
+    const settings = {
+        enableVanillaQuickRoll: false,
+        enableActivityQuickRoll: true,
+        enableAbilityQuickRoll: true,
+        enableSkillQuickRoll: true,
+        enableToolQuickRoll: true,
+        manualDamageMode: 0,
+        damageApplyMode: "rsr",
+        alwaysRollMulti: false,
+        enableOverlayButtons: false,
+        enableHideFinalResult: false,
+        alwaysShowButtons: true,
+        enableD20Icons: true,
+        applyDamageTo: 0,
+        rerollEveryone: true,
+        rerollPlayers: false,
+        fudgeGM: false,
+        rerollSoundEnabled: true,
+        rerollLogChat: true,
+        ...options.settings
+    };
+    // Defaults for settings RSR reads from other modules' namespaces. Keyed by
+    // "namespace.key" so game.settings.get("core", "rollMode") returns Foundry's real
+    // default ("publicroll") rather than undefined. Override via options.foreignSettings.
+    const foreignSettings = {
+        "core.rollMode": "publicroll",
+        ...options.foreignSettings
+    };
+    const registeredSettings = new Map();
+    const registeredKeybindings = new Map();
+    const activeModules = new Map(Object.entries(options.modules ?? {}));
+    const hookCalls = [];
+    const hookHandlers = new Map();
+    const messages = new Map();
+
+    class TestApplicationV2 {
+        constructor(appOptions = {}) {
+            Object.assign(this, appOptions);
+            this.options = appOptions;
+        }
+
+        render() {
+            this.rendered = true;
+            return this;
+        }
+    }
+
+    class TestRoll {
+        constructor(formula = "1", data = {}, rollOptions = {}) {
+            this.formula = formula;
+            this.data = data;
+            this.options = { ...rollOptions };
+            this.class = this.constructor.name;
+            this.terms = [];
+            this.dice = [];
+            this._total = Number.parseInt(formula, 10) || 0;
+            this._evaluated = true;
+        }
+
+        // Real Foundry exposes `total` as a getter over `_total`, and production code
+        // (reroll.js, bonus.js, chat.js) writes `roll._total = roll._evaluateTotal()`
+        // after mutating die results expecting `roll.total` to follow. Model that
+        // relationship faithfully so a regression that fails to fold a rerolled/fudged
+        // die back into the total is actually caught instead of masked by a frozen value.
+        get total() {
+            return this._total;
+        }
+
+        set total(value) {
+            this._total = value;
+        }
+
+        async evaluate() {
+            this._evaluated = true;
+            return this;
+        }
+
+        _evaluateTotal() {
+            if (this.terms.length) {
+                return this.terms.reduce((sum, term) => sum + (term.total ?? 0), 0);
+            }
+            return this._total;
+        }
+
+        resetFormula() {}
+
+        toJSON() {
+            return {
+                class: this.constructor.name,
+                formula: this.formula,
+                total: this.total,
+                options: this.options,
+                terms: this.terms,
+                dice: this.dice
+            };
+        }
+
+        async toMessage() {
+            return { type: "roll", rolls: [this], flags: {} };
+        }
+
+        static fromData(data) {
+            const RollClass = rollClassForName(data?.class);
+            const roll = new RollClass(data?.formula ?? "1", {}, data?.options ?? {});
+            roll.total = data?.total ?? roll.total;
+            roll._total = roll.total;
+            roll.terms = data?.terms ?? roll.terms;
+            roll.dice = data?.dice ?? roll.dice;
+            return roll;
+        }
+
+        static fromTerms(terms) {
+            const roll = new this("0");
+            roll.terms = terms;
+            roll.dice = terms.filter((term) => term.faces);
+            roll.total = terms.reduce((total, term) => total + (term.total ?? sumResults(term.results)), 0);
+            roll._total = roll.total;
+            return roll;
+        }
+    }
+
+    class D20Roll extends TestRoll {
+        static ADV_MODE = { NORMAL: 0, ADVANTAGE: 1, DISADVANTAGE: 2 };
+    }
+
+    class DamageRoll extends TestRoll {
+        static async toMessage(rolls) {
+            return { type: "roll", rolls, flags: {} };
+        }
+    }
+
+    class BasicRoll extends TestRoll {}
+
+    class TestDie {
+        constructor({ number = 1, faces = 20, results = [], modifiers = [], options = {} } = {}) {
+            this.number = number;
+            this.faces = faces;
+            this.results = results;
+            this.modifiers = modifiers;
+            this.options = options;
+        }
+
+        // Recompute from the live results so an in-place mutation of a result
+        // (reroll/fudge) is reflected in the die total, matching real Foundry.
+        get total() {
+            return sumResults(this.results);
+        }
+
+        keep(modifier) {
+            this.modifiers.push(modifier);
+        }
+
+        _evaluateModifiers() {
+            const keepHigh = this.modifiers.some((modifier) => modifier.includes("kh"));
+            const keepLow = this.modifiers.some((modifier) => modifier.includes("kl"));
+            if (!keepHigh && !keepLow) return;
+
+            const ordered = [...this.results].sort((a, b) => keepHigh ? b.result - a.result : a.result - b.result);
+            const kept = ordered[0];
+            this.results.forEach((result) => {
+                result.discarded = result !== kept;
+                result.active = result === kept;
+            });
+        }
+    }
+
+    class OperatorTerm {
+        constructor({ operator }) {
+            this.operator = operator;
+            this.total = 0;
+        }
+    }
+
+    class TestChatMessage {
+        constructor(data = {}) {
+            Object.assign(this, data);
+            this.flags ??= {};
+            this.rolls ??= data.rolls ?? [];
+            this.type ??= data.type ?? "roll";
+            this.id ??= data.id ?? `message-${messages.size + 1}`;
+            messages.set(this.id, this);
+        }
+
+        async renderHTML() {
+            const rollHtml = this.rolls.map((roll) => renderRollHtml(roll)).join("");
+            return `<article class="chat-message" data-message-id="${this.id}"><div class="message-content"><div class="dnd5e2 chat-card">${rollHtml}</div></div></article>`;
+        }
+
+        async update(update = {}) {
+            Object.assign(this, update);
+            this.updatedWith = update;
+            return this;
+        }
+
+        delete() {
+            this.deleted = true;
+        }
+
+        static getSpeaker({ user } = {}) {
+            return { user: user?.id };
+        }
+
+        static async create(data) {
+            TestChatMessage.created.push(data);
+            return data;
+        }
+
+        static getWhisperRecipients() {
+            return [{ id: "gm" }];
+        }
+    }
+    TestChatMessage.created = [];
+
+    function rollClassForName(name) {
+        if (name === "D20Roll") return D20Roll;
+        if (name === "DamageRoll") return DamageRoll;
+        if (name === "BasicRoll") return BasicRoll;
+        return TestRoll;
+    }
+
+    function sumResults(results = []) {
+        return results.reduce((total, result) => total + (result.active === false ? 0 : Number(result.result ?? 0)), 0);
+    }
+
+    function renderRollHtml(roll) {
+        const total = roll.total ?? roll._total ?? 0;
+        const dice = roll.dice?.length
+            ? roll.dice.map((die) => {
+                const rolls = die.results.map((result) => `<span class="roll die">${result.result}</span>`).join("");
+                return `<section class="tooltip-part"><div class="dice">${rolls}</div></section>`;
+            }).join("")
+            : `<section class="tooltip-part"><div class="dice"><span class="roll die">${total}</span></div></section>`;
+
+        return `<div class="dice-roll"><div class="dice-result"><div class="dice-formula">${roll.formula}</div><div class="dice-total">${total}</div><div class="dice-tooltip"><div class="dice-rolls">${dice}</div></div></div></div>`;
+    }
+
+    globalThis.Roll = TestRoll;
+    globalThis.ChatMessage = TestChatMessage;
+    globalThis.CONFIG = {
+        ChatMessage: { documentClass: TestChatMessage },
+        Dice: {
+            D20Roll,
+            DamageRoll,
+            BasicRoll,
+            terms: { d: TestDie }
+        },
+        DND5E: {
+            damageTypes: { slashing: { label: "Slashing" } },
+            healingTypes: { healing: { label: "Healing" } },
+            aggregateDamageDisplay: true
+        },
+        sounds: { dice: "dice.wav" },
+        ActiveEffect: { documentClass: { _manageConcentration: vi.fn() } }
+    };
+
+    globalThis.foundry = {
+        applications: {
+            api: {
+                ApplicationV2: TestApplicationV2,
+                DialogV2: { prompt: vi.fn() }
+            },
+            handlebars: {
+                renderTemplate: vi.fn(async (template, data = {}) => renderTemplate(template, data))
+            }
+        },
+        audio: { AudioHelper: { play: vi.fn() } },
+        dice: { terms: { Die: TestDie, OperatorTerm } },
+        helpers: {
+            interaction: {
+                KeyboardManager: {
+                    MODIFIER_KEYS: { CONTROL: "Control", SHIFT: "Shift", ALT: "Alt" },
+                    MODIFIER_CODES: {
+                        Control: ["ControlLeft", "ControlRight", "MetaLeft", "MetaRight"],
+                        Shift: ["ShiftLeft", "ShiftRight"],
+                        Alt: ["AltLeft", "AltRight"]
+                    }
+                }
+            }
+        },
+        utils: {
+            deepClone: (value) => structuredClone(value),
+            duplicate: (value) => structuredClone(value),
+            mergeObject: (target, source) => ({ ...target, ...source }),
+            getProperty: (object, path) => path.split(".").reduce((value, key) => value?.[key], object),
+            escapeHTML: (value) => String(value)
+                .replaceAll("&", "&amp;")
+                .replaceAll("<", "&lt;")
+                .replaceAll(">", "&gt;")
+                .replaceAll('"', "&quot;")
+                .replaceAll("'", "&#39;")
+        }
+    };
+    globalThis.duplicate = globalThis.foundry.utils.duplicate;
+
+    globalThis.CONST = {
+        KEYBINDING_PRECEDENCE: { NORMAL: 0 }
+    };
+
+    globalThis.Hooks = {
+        on: vi.fn((name, handler) => hookHandlers.set(name, handler)),
+        once: vi.fn((name, handler) => hookHandlers.set(name, handler)),
+        callAll: vi.fn((name, ...args) => hookCalls.push({ name, args }))
+    };
+
+    globalThis.game = {
+        user: {
+            id: "user-1",
+            name: "Player <One>",
+            isGM: false,
+            targets: new Set(options.targets ?? [])
+        },
+        users: new Map(),
+        keyboard: { downKeys: new Set(options.downKeys ?? []) },
+        keybindings: {
+            // Real Foundry returns [] for an action that was never registered. Defaulting
+            // to a Shift binding would make every unregistered action look Shift-bound and
+            // hide wrong-action / wrong-namespace lookups, so mirror the empty default.
+            get: vi.fn((namespace, action) => registeredKeybindings.get(`${namespace}.${action}`) ?? []),
+            register: vi.fn((namespace, action, config) => registeredKeybindings.set(`${namespace}.${action}`, config.editable ?? []))
+        },
+        settings: {
+            // RSR settings live under the module namespace and are exposed flat via the
+            // `settings` object tests mutate. Foreign namespaces (core/dnd5e) must NOT
+            // resolve against that flat store — returning the RSR value for an unrelated
+            // key masks bugs — so route them through realistic defaults instead.
+            get: vi.fn((namespace, key) => {
+                if (namespace === "rsreforged") return settings[key];
+                return foreignSettings[`${namespace}.${key}`];
+            }),
+            register: vi.fn((namespace, key, config) => {
+                registeredSettings.set(key, config);
+                if (namespace === "rsreforged") settings[key] ??= config.default;
+            })
+        },
+        modules: {
+            get: vi.fn((name) => ({ active: activeModules.get(name) ?? false, version: "test" }))
+        },
+        messages,
+        actors: new Map(),
+        scenes: new Map(),
+        combats: [],
+        combat: null,
+        dice3d: null,
+        i18n: {
+            localize: vi.fn((key) => key),
+            format: vi.fn((key, data) => `${key}:${JSON.stringify(data)}`)
+        }
+    };
+
+    globalThis.canvas = {
+        tokens: { controlled: options.controlled ?? [] },
+        hud: { token: { _displayState: 0, render: vi.fn() } }
+    };
+
+    globalThis.ui = {
+        chat: { scrollBottom: vi.fn() },
+        notifications: {
+            info: vi.fn(),
+            warn: vi.fn(),
+            error: vi.fn()
+        }
+    };
+
+    globalThis.fromUuidSync = vi.fn((uuid) => options.uuids?.[uuid] ?? null);
+
+    return {
+        dom,
+        settings,
+        registeredSettings,
+        registeredKeybindings,
+        hookCalls,
+        hookHandlers,
+        messages,
+        classes: { TestRoll, D20Roll, DamageRoll, BasicRoll, TestDie, OperatorTerm, TestChatMessage }
+    };
+}
+
+export function makeRoll(RollClass, { formula = "1", total = 1, faces = null, results = [] } = {}) {
+    const roll = new RollClass(formula);
+    roll.total = total;
+    roll._total = total;
+    if (faces) {
+        const die = new foundry.dice.terms.Die({
+            number: results.length || 1,
+            faces,
+            results: results.map((result) => ({
+                result,
+                active: true,
+                discarded: false
+            })),
+            modifiers: []
+        });
+        roll.dice = [die];
+        roll.terms = [die];
+    }
+    return roll;
+}
+
+function renderTemplate(template, data = {}) {
+    if (template.endsWith("rsr-section.html")) {
+        return `<section class="card-header description ${data.critical ? "critical" : ""} ${data.section ?? ""}"><div class="rsr-header"><div class="rsr-title">${data.icon ?? ""}${data.title ?? ""}</div>${data.subtitle ? `<div class="rsr-subtitle">${data.subtitle}</div>` : ""}</div></section>`;
+    }
+
+    if (template.endsWith("rsr-button.html")) {
+        return `<button type="button" data-action="rsr-${data.action}">${data.icon ?? ""}${data.title ?? ""}</button>`;
+    }
+
+    if (template.endsWith("rsr-damage-buttons.html")) {
+        return `<div class="rsr-damage-buttons"><button data-action="rsr-apply-damage" data-multiplier="-1"></button><button data-action="rsr-apply-temp" data-multiplier="1"></button><button data-action="rsr-apply-damage" data-multiplier="1"></button><div class="rsr-indicator"></div></div>`;
+    }
+
+    if (template.endsWith("rsr-multiroll.html")) {
+        return `<span class="rsr-multiroll">${data.key ?? ""}</span>`;
+    }
+
+    if (template.endsWith("rsr-damage.html")) {
+        return `<span class="rsr-damage-total">${data.total ?? ""}</span>`;
+    }
+
+    if (template.endsWith("rsr-overlay-multiroll.html")) {
+        return `<div class="rsr-overlay-multiroll"><div></div></div>`;
+    }
+
+    if (template.endsWith("rsr-overlay-crit.html")) {
+        return `<div class="rsr-overlay-crit"><div></div></div>`;
+    }
+
+    return "";
+}

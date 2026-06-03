@@ -16,6 +16,7 @@ import { dirname, resolve } from "node:path";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CHAT_JS = readFileSync(resolve(__dirname, "../src/utils/chat.js"), "utf8");
+const ACTIVITY_JS = readFileSync(resolve(__dirname, "../src/utils/activity.js"), "utf8");
 
 function extractFunctionBody(source, signature) {
     const start = source.indexOf(signature);
@@ -46,6 +47,10 @@ function extractFunctionBody(source, signature) {
 }
 
 describe("Integration API: rsreforged.* hook emissions in chat.js", () => {
+    // Structural smoke check only — it counts call sites in source text, so a refactor
+    // that moves an emit behind a dead guard would keep the count at 7. The behavioral
+    // guarantees (each emit fires on the correct branch, in the correct order) live in
+    // the per-emit tests below; this guard just catches an accidental add/drop of a site.
     it("emits exactly seven Hooks.callAll sites (one pre, one post, three roll types with damage emitting twice, one apply-damage)", () => {
         const matches = CHAT_JS.match(/Hooks\.callAll/g) ?? [];
         expect(matches.length).toBe(7);
@@ -164,6 +169,164 @@ describe("Integration API: rsreforged.* hook emissions in chat.js", () => {
         expect(injectContent).toMatch(/_injectAttackRoll\([^)]*contentHtml:\s*html/);
         expect(injectContent).toMatch(/_injectDamageRoll\([^)]*contentHtml:\s*html/);
         expect(injectContent).toMatch(/_injectFormulaRoll\([^)]*contentHtml:\s*html/);
+    });
+
+    it("rescues dnd5e .supplement elements from doomed chat-cards BEFORE the strip — preserves mastery anchors, damage-on-save notes, and legendary-resistance flags for standalone attack-roll cards", () => {
+        // Regression for #13. dnd5e's _enrichAttackTargets appends a <p class="supplement">
+        // (mastery anchor + others) to .dnd5e2.chat-card. For standalone attack-roll cards
+        // (no .activation-card / .usage-card class), RSR's strip would remove the supplement
+        // along with the card. The rescue must detach .supplement OUT of the doomed cards
+        // before remove() runs.
+        const body = extractFunctionBody(CHAT_JS, "async function _injectContent(message, type, html)");
+
+        // Locate the strip block — the assignment that captures doomed cards.
+        const doomedIdx = body.search(/const\s+doomed\s*=\s*html\.find\(\s*['"`]\.dnd5e2\.chat-card['"`]\s*\)\.not\(/);
+        expect(doomedIdx).toBeGreaterThan(-1);
+
+        // The detach + appendTo must happen on `doomed` and precede `doomed.remove()`.
+        const detachIdx = body.indexOf("doomed.find('.supplement').appendTo(html)", doomedIdx);
+        const removeIdx = body.indexOf("doomed.remove()", doomedIdx);
+        expect(detachIdx).toBeGreaterThan(doomedIdx);
+        expect(removeIdx).toBeGreaterThan(detachIdx);
+    });
+
+    it("snapshots child roll supplements onto the parent before deleting the child message", () => {
+        // Regression for #13 quick-roll activity cards. The attack roll message can carry
+        // the native dnd5e mastery supplement, then RSR merges its roll into the parent
+        // activity card and deletes the child before the normal supplement placement runs.
+        const body = extractFunctionBody(CHAT_JS, "async function _injectContent(message, type, html)");
+        const mergeIdx = body.indexOf("if (parent && parent.flags[MODULE_SHORT] && message.isAuthor)");
+        const storeIdx = body.indexOf("_storeSupplementsForMerge(parent, type, html)", mergeIdx);
+        const deleteIdx = body.indexOf("message.delete()", mergeIdx);
+
+        expect(mergeIdx).toBeGreaterThan(-1);
+        expect(storeIdx).toBeGreaterThan(mergeIdx);
+        expect(deleteIdx).toBeGreaterThan(storeIdx);
+    });
+
+    it("stores supplement HTML under flags.rsreforged.supplements[type] without parsing mastery text", () => {
+        const storeBody = extractFunctionBody(CHAT_JS, "function _storeSupplementsForMerge(parent, type, html)");
+        expect(storeBody).toMatch(/parent\.flags\[MODULE_SHORT\]\.supplements\s*\?\?=/);
+        expect(storeBody).toMatch(/parent\.flags\[MODULE_SHORT\]\.supplements\[type\]\s*=\s*_snapshotSupplements\(html\)/);
+
+        const snapshotBody = extractFunctionBody(CHAT_JS, "function _snapshotSupplements(html)");
+        expect(snapshotBody).toMatch(/html\.find\(\s*['"`]\.supplement['"`]\s*\)/);
+        expect(snapshotBody).toMatch(/element\.outerHTML/);
+    });
+
+    it("places supplements into .rsr-section-attack with .rsr-section-damage and .rsr-section-formula as fallbacks — non-attack activity cards (save-only damage, formula-only) get supplements placed and styled, not orphaned at html root", () => {
+        // Regression for the case where damage-on-save or legendary-resistance
+        // supplements ride a SaveActivity that has renderDamage but no renderAttack.
+        // Pre-fix the placement was inside `if (renderAttack)` so those activities
+        // had their supplements detached but never re-placed under any RSR section.
+        const body = extractFunctionBody(CHAT_JS, "async function _injectContent(message, type, html)");
+        expect(body).toMatch(/supplementHost\s*=\s*html\.find\(\s*['"`]\.rsr-section-attack['"`]\s*\)/);
+        expect(body).toMatch(/supplementHost\s*=\s*html\.find\(\s*['"`]\.rsr-section-damage['"`]\s*\)/);
+        expect(body).toMatch(/supplementHost\s*=\s*html\.find\(\s*['"`]\.rsr-section-formula['"`]\s*\)/);
+    });
+
+    it("restores stored supplements under the matching RSR section and marks restored nodes for idempotent rerenders", () => {
+        const restoreBody = extractFunctionBody(CHAT_JS, "function _restoreStoredSupplements(message, html)");
+
+        expect(restoreBody).toMatch(/html\.find\(\s*['"`]\[data-rsr-restored-supplement\],\s*\[data-rsr-generated-mastery\]['"`]\s*\)\.remove\(\)/);
+        expect(restoreBody).toMatch(/\[ROLL_TYPE\.ATTACK\]:\s*html\.find\(\s*['"`]\.rsr-section-attack['"`]\s*\)/);
+        expect(restoreBody).toMatch(/\[ROLL_TYPE\.DAMAGE\]:\s*html\.find\(\s*['"`]\.rsr-section-damage['"`]\s*\)/);
+        expect(restoreBody).toMatch(/restored\.attr\(\s*['"`]data-rsr-restored-supplement['"`],\s*type\s*\)/);
+        expect(restoreBody).toMatch(/restored\.addClass\(\s*['"`]rsr-supplement['"`]\s*\)/);
+        expect(restoreBody).toMatch(/host\.append\(restored\)/);
+    });
+
+    it("restores stored supplements before the existing live supplement placement pass", () => {
+        const body = extractFunctionBody(CHAT_JS, "async function _injectContent(message, type, html)");
+        const restoreIdx = body.indexOf("_restoreStoredSupplements(message, html)");
+        const placementIdx = body.indexOf("supplementHost.append(html.find('.supplement').not(supplementHost.find('.supplement'))");
+
+        expect(restoreIdx).toBeGreaterThan(-1);
+        expect(placementIdx).toBeGreaterThan(restoreIdx);
+    });
+
+    it("excludes already-restored snapshots from the attack-preferring placement sweep so damage supplements stay in their section", () => {
+        // Regression: _restoreStoredSupplements routes saved damage supplements under
+        // .rsr-section-damage, but the placement sweep below prefers .rsr-section-attack.
+        // Without the exclusion it would relocate the restored damage notes to the wrong host.
+        const body = extractFunctionBody(CHAT_JS, "async function _injectContent(message, type, html)");
+        expect(body).toMatch(/supplementHost\.append\(html\.find\('\.supplement'\)\.not\(supplementHost\.find\('\.supplement'\)\)\.not\('\[data-rsr-restored-supplement\]'\)\)/);
+    });
+
+    it("syncs ChatMessage.rolls on the manual damage-button path too, not only the initial quick roll", () => {
+        // Regression: runActivityAction (manual damage button) must keep ChatMessage.rolls
+        // in step with flags.rsreforged.rolls so modules reading the collection don't go stale.
+        const body = extractFunctionBody(ACTIVITY_JS, "static async runActivityAction(message, action)");
+        expect(body).toMatch(/const\s+serializedRolls\s*=\s*currentRolls\.map/);
+        expect(body).toMatch(/message\.flags\[MODULE_SHORT\]\.rolls\s*=\s*serializedRolls/);
+        expect(body).toMatch(/rolls:\s*serializedRolls/);
+    });
+
+    it("generates fallback mastery supplements after live supplements have been folded into the final host", () => {
+        const body = extractFunctionBody(CHAT_JS, "async function _injectContent(message, type, html)");
+        const placementIdx = body.indexOf("supplementHost.append(html.find('.supplement').not(supplementHost.find('.supplement'))");
+        const generatedIdx = body.indexOf("_restoreMasterySupplement(message, supplementHost)", placementIdx);
+
+        expect(placementIdx).toBeGreaterThan(-1);
+        expect(generatedIdx).toBeGreaterThan(placementIdx);
+    });
+
+    it("generates a native-style mastery action supplement when quick-roll metadata has mastery but no saved supplement", () => {
+        const createBody = extractFunctionBody(CHAT_JS, "function _createMasterySupplement({ mastery, label, uuid })");
+        expect(createBody).toMatch(/<p class="supplement"><\/p>/);
+        expect(createBody).toMatch(/<a class="content-link"><\/a>/);
+        expect(createBody).toMatch(/"data-tooltip":\s*label/);
+        expect(createBody).toMatch(/"data-uuid":\s*uuid/);
+        expect(createBody).not.toMatch(/wm5e-mastery-reference/);
+    });
+
+    it("uses the dnd5e mastery label when generating fallback mastery links", () => {
+        const labelBody = extractFunctionBody(CHAT_JS, "function _getMasteryLabel(mastery)");
+        expect(labelBody).toMatch(/CONFIG\.DND5E\?\.weaponMasteries\?\.\[mastery\]\?\.label/);
+        expect(labelBody).toMatch(/CoreUtility\.localize\(label\)/);
+    });
+
+    it("can derive generated mastery links from the associated activity item, not only roll options", () => {
+        const masteryBody = extractFunctionBody(CHAT_JS, "function _getRollMastery(message)");
+        expect(masteryBody).toMatch(/ActivityUtility\._getActivityFromMessage\(message\)/);
+        expect(masteryBody).toMatch(/activity\?\.item\?\.system\?\.mastery/);
+    });
+
+    it("does not generate a duplicate mastery supplement when an existing supplement already has the same tooltip or uuid", () => {
+        const restoreBody = extractFunctionBody(CHAT_JS, "function _restoreMasterySupplement(message, host)");
+        expect(restoreBody).toMatch(/host\.find\(\s*['"`]\.supplement a['"`]\s*\)\.filter/);
+        expect(restoreBody).toMatch(/element\.dataset\?\.tooltip\s*===\s*label/);
+        expect(restoreBody).toMatch(/element\.dataset\?\.uuid\s*===\s*uuid/);
+        expect(restoreBody).toMatch(/if\s*\(existing\.length\)\s*return/);
+    });
+
+    it("does not generate fallback mastery supplements inside the stored-supplement restore helper", () => {
+        const restoreBody = extractFunctionBody(CHAT_JS, "function _restoreStoredSupplements(message, html)");
+        expect(restoreBody).not.toMatch(/_restoreMasterySupplement/);
+    });
+
+    it("syncs quick activity rolls onto the parent ChatMessage rolls collection for wm5e click handlers", () => {
+        const body = extractFunctionBody(ACTIVITY_JS, "static async runActivityActions(message)");
+        expect(body).toMatch(/const\s+serializedRolls\s*=\s*currentRolls\.map/);
+        expect(body).toMatch(/message\.flags\[MODULE_SHORT\]\.rolls\s*=\s*serializedRolls/);
+        expect(body).toMatch(/rolls:\s*serializedRolls/);
+    });
+
+    it("copies attack mastery onto flags.dnd5e.roll for merged quick activity cards", () => {
+        const body = extractFunctionBody(ACTIVITY_JS, "static async runActivityActions(message)");
+        expect(body).toMatch(/message\.flags\.dnd5e\s*\?\?=/);
+        expect(body).toMatch(/type:\s*ROLL_TYPE\.ATTACK/);
+        expect(body).toMatch(/attackRoll\.options\?\.mastery\s*\?\s*\{\s*mastery:\s*attackRoll\.options\.mastery\s*\}/);
+    });
+
+    it("does NOT removeClass('supplement') anywhere in chat.js — downstream modules and dnd5e enrichers must continue to find .supplement after the rebuild", () => {
+        // Regression for #13. The pre-fix rescue at chat.js:504 renamed
+        // .supplement -> .rsr-supplement, breaking any module querying for the
+        // original class. The fix is additive: keep .supplement, add .rsr-supplement
+        // for RSR's own styling.
+        expect(CHAT_JS).not.toMatch(/removeClass\(\s*['"`]supplement['"`]\s*\)/);
+        // And the additive class must still be applied so RSR's CSS hits.
+        expect(CHAT_JS).toMatch(/addClass\(\s*['"`]rsr-supplement['"`]\s*\)/);
     });
 
     it("emits preRenderChatMessageContent BEFORE the child-merge return path — locks in the contract the wm5e worked example relies on", () => {

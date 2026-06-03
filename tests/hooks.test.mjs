@@ -11,15 +11,23 @@ const state = vi.hoisted(() => ({
         manualDamageMode: 0
     },
     logError: vi.fn(),
+    logWarning: vi.fn(),
     processActivity: vi.fn(),
     processRoll: vi.fn()
 }));
 
-vi.mock("../src/utils/activity.js", () => ({
-    ActivityUtility: {
-        _getActivityFromMessage: vi.fn((message) => message._activity ?? null)
-    }
-}));
+vi.mock("../src/utils/activity.js", async () => {
+    // Mock activity resolution, but route render-flag derivation through the real
+    // setRenderFlags so this stays an integration test of preCreate's single source
+    // of truth rather than a re-implementation of it.
+    const actual = await vi.importActual("../src/utils/activity.js");
+    return {
+        ActivityUtility: {
+            _getActivityFromMessage: vi.fn((message) => message._activity ?? null),
+            setRenderFlags: actual.ActivityUtility.setRenderFlags
+        }
+    };
+});
 
 vi.mock("../src/utils/settings.js", () => ({
     SETTING_NAMES: {
@@ -41,7 +49,8 @@ vi.mock("../src/utils/settings.js", () => ({
 vi.mock("../src/utils/log.js", () => ({
     LogUtility: {
         log: vi.fn(),
-        logError: state.logError
+        logError: state.logError,
+        logWarning: state.logWarning
     }
 }));
 
@@ -50,7 +59,7 @@ vi.mock("../src/utils/chat.js", () => ({ ChatUtility: { processChatMessage: vi.f
 vi.mock("../src/utils/reroll.js", () => ({ RerollManager: { registerGlobalListener: vi.fn() } }));
 vi.mock("../src/utils/roll.js", () => ({
     KEYBIND_VERSATILE_TWO_HANDED: "versatileTwoHanded",
-    ROLL_TYPE: { ATTACK: "attack" },
+    ROLL_TYPE: { ATTACK: "attack", DAMAGE: "damage", HEALING: "healing", FORMULA: "roll" },
     RollUtility: {
         processActivity: state.processActivity,
         processRoll: state.processRoll
@@ -102,13 +111,14 @@ describe("HooksUtility preCreateChatMessage quick-roll flags", () => {
             manualDamageMode: 0
         };
         state.logError.mockClear();
+        state.logWarning.mockClear();
         state.processActivity.mockClear();
         state.processRoll.mockClear();
     });
 
     it("honors the skill quick-roll setting at roll time", () => {
         const handlers = registerRollHooks();
-        const preRollSkill = handlers.get("dnd5e.preRollSkillV2");
+        const preRollSkill = handlers.get("dnd5e.preRollSkill");
         const config = {};
         const dialog = { configure: true };
         const message = { data: { flags: {} } };
@@ -119,6 +129,31 @@ describe("HooksUtility preCreateChatMessage quick-roll flags", () => {
 
         state.settings.enableSkillQuickRoll = true;
         expect(preRollSkill(config, dialog, message)).toBe(true);
+        expect(state.processRoll).toHaveBeenCalledWith(config, dialog, message);
+    });
+
+    it("does not let the ability hook process skill or tool rolls", () => {
+        const handlers = registerRollHooks();
+        const preRollAbility = handlers.get("dnd5e.preRollAbilityCheck");
+        const dialog = { configure: true };
+        const message = { data: { flags: {} } };
+
+        expect(preRollAbility({ hookNames: ["skill", "abilityCheck"] }, dialog, message)).toBe(true);
+        expect(preRollAbility({ hookNames: ["tool", "abilityCheck"] }, dialog, message)).toBe(true);
+
+        expect(state.processRoll).not.toHaveBeenCalled();
+    });
+
+    it("processes a plain ability check through the ability hook", () => {
+        const handlers = registerRollHooks();
+        const preRollAbility = handlers.get("dnd5e.preRollAbilityCheck");
+        const config = { hookNames: ["abilityCheck", "d20Test"] };
+        const dialog = { configure: true };
+        const message = { data: { flags: {} } };
+
+        // Positive branch: a genuine ability check (no skill/tool in the chain) must
+        // still be quick-rolled, otherwise the skill/tool guard would have swallowed it.
+        expect(preRollAbility(config, dialog, message)).toBe(true);
         expect(state.processRoll).toHaveBeenCalledWith(config, dialog, message);
     });
 
@@ -144,6 +179,30 @@ describe("HooksUtility preCreateChatMessage quick-roll flags", () => {
         // implementation — asserting them here would lock in mock behavior.
     });
 
+    it("does not process activity quick-roll hooks when vanilla workflow mode is enabled", () => {
+        const handlers = registerRollHooks();
+        const preUseActivity = handlers.get("dnd5e.preUseActivity");
+
+        state.settings.enableActivityQuickRoll = true;
+        state.settings.enableVanillaQuickRoll = true;
+
+        expect(preUseActivity({}, {}, {}, { data: { flags: {} } })).toBe(true);
+        expect(state.processActivity).not.toHaveBeenCalled();
+    });
+
+    it("records consumed ammunition on attack message flags and restores temporary quantity", () => {
+        const handlers = registerRollHooks();
+        const activityConsumption = handlers.get("dnd5e.activityConsumption");
+        const activity = { type: "attack", hasOwnProperty: Object.prototype.hasOwnProperty };
+        const messageConfig = {};
+        const ammoUpdate = { _id: "arrow-1", "system.quantity": 0 };
+
+        activityConsumption(activity, {}, messageConfig, { item: [ammoUpdate] });
+
+        expect(messageConfig.flags[MODULE_SHORT].ammunition).toBe("arrow-1");
+        expect(ammoUpdate["system.quantity"]).toBe(1);
+    });
+
     it("preserves slow-roll flags written by the pre-use activity hook", () => {
         const preCreate = registerPreCreateHook();
         const message = usageMessage({
@@ -163,6 +222,29 @@ describe("HooksUtility preCreateChatMessage quick-roll flags", () => {
                 advantage: true
             }
         });
+        expect(state.logError).not.toHaveBeenCalled();
+    });
+
+    it("stamps base flags without render flags and warns when activity resolution fails in preCreate", () => {
+        // Regression: quickRoll already seeded (by processActivity), activity null in
+        // preCreate. The message must keep its claim (runActivityActions retries
+        // resolution at render time) but must NOT gain render flags it can't back,
+        // and the failure must be surfaced as a warning rather than swallowed.
+        const preCreate = registerPreCreateHook();
+        const message = usageMessage({
+            [MODULE_SHORT]: { quickRoll: true, processed: false }
+        });
+        // no message._activity — _getActivityFromMessage returns null
+
+        preCreate(message, {}, {}, "user-1");
+
+        expect(message.updateSource).toHaveBeenCalledTimes(1);
+        const written = message._updates[0][`flags.${MODULE_SHORT}`];
+        expect(written).toMatchObject({ quickRoll: true, processed: false });
+        expect(written).not.toHaveProperty("renderAttack");
+        expect(written).not.toHaveProperty("renderDamage");
+        expect(written).not.toHaveProperty("renderFormula");
+        expect(state.logWarning).toHaveBeenCalledTimes(1);
         expect(state.logError).not.toHaveBeenCalled();
     });
 

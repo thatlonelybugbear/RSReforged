@@ -78,8 +78,8 @@ export class HooksUtility {
         LogUtility.log("Registering roll hooks");
 
         Hooks.on(HOOKS_DND5E.PRE_ROLL_ABILITY_CHECK, (config, dialog, message) => {
-            // dnd5e 5.3 fires preRollAbilityCheckV2 for skill and tool checks too
-            // (their hookNames chain is [type, "abilityCheck", "d20Test"]). Defer to
+            // dnd5e fires preRollAbilityCheck for skill and tool checks too (their
+            // hookNames chain is [type, "abilityCheck", "d20Test"]). Defer to
             // PRE_ROLL_SKILL / PRE_ROLL_TOOL_CHECK so each category's setting controls
             // its own roll path instead of QUICK_ABILITY_ENABLED hijacking them.
             if (config.hookNames?.some(n => n === "skill" || n === "tool")) return true;
@@ -240,34 +240,15 @@ export class HooksUtility {
 
                 const activity = ActivityUtility._getActivityFromMessage(message);
 
-                if (flags.quickRoll && activity) {
-                    const hasAttack = activity.type === "attack" || !!activity.attack || activity.hasOwnProperty("attack");
-                    const hasDamage = activity.type === "damage" || !!activity.damage || activity.type === "attack" || activity.type === "save" || activity.hasOwnProperty("damage");
-                    const hasHealing = activity.type === "heal" || !!activity.healing || activity.hasOwnProperty("healing");
-                    const hasFormula = activity.type === "utility" || !!activity.roll || activity.hasOwnProperty("formula");
-
-                    if (hasAttack) flags.renderAttack = true;
-
-                    const manualDamageMode = SettingsUtility.getSettingValue(SETTING_NAMES.MANUAL_DAMAGE_MODE);
-                    if (hasDamage) {
-                        flags.manualDamage = (manualDamageMode === 2 || (manualDamageMode === 1 && hasAttack));
-                        flags.renderDamage = !flags.manualDamage;
-                    }
-
-                    if (hasHealing) {
-                        flags.isHealing = true;
-                        flags.renderDamage = true;
-                    }
-
-                    if (hasFormula) {
-                        flags.renderFormula = true;
-                        const fName = activity.roll?.name || activity.formula?.name;
-                        if (fName && fName !== "") flags.formulaName = fName;
-                    }
+                if (activity) {
+                    // Single source of truth for render-flag derivation (activity.js).
+                    ActivityUtility.setRenderFlags(activity, flags);
                 } else if (flags.quickRoll) {
                     // Slow-roll messages are driven by dnd5e's dialog path; only quick-roll
                     // messages need an immediately resolvable activity for RSR rendering.
-                    LogUtility.logError("Could not resolve activity during preCreate.");
+                    // Not fatal: runActivityActions retries resolution at render time,
+                    // when the persisted document's getAssociatedActivity is available.
+                    LogUtility.logWarning("Could not resolve activity during preCreate; will retry at render.");
                 }
 
                 message.updateSource({ [`flags.${MODULE_SHORT}`]: flags });
