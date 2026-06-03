@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.8.1] — 2026-06-03
+
+### Fixed
+- **A quick-rolled activity whose message activity can't be resolved during `preCreateChatMessage` no longer produces an empty, roll-less card.** On the quick path `RollUtility.processActivity` suppresses dnd5e's own follow-up rolls (`usageConfig.subsequentActions = false`) and seeds `flags.rsreforged.quickRoll` before the message exists; if `_getActivityFromMessage` then failed in preCreate (UUID lookups can miss on a not-yet-persisted document), the message reached `ActivityUtility.runActivityActions` with no render flags and was marked `processed` with zero rolls — losing the roll entirely. `runActivityActions` now retries activity resolution at render time, when the persisted document's `getAssociatedActivity` is available, and derives render flags via `setRenderFlags` before rolling. The retry is guarded (`quickRoll` set, unprocessed, no render flags present) so legacy pre-RSR usage messages stay passive per [#15](https://github.com/arrowedisgaming/RSReforged/issues/15); the preCreate failure now logs a warning instead of an error since it is recoverable.
+- **Enabling RSReforged no longer rerolls existing usage chat messages.** Fixes [#15](https://github.com/arrowedisgaming/RSReforged/issues/15). `ChatUtility.processChatMessage` no longer stamps `flags.rsreforged` on author-owned usage cards that lack them at render time; only messages claimed during creation (`preCreateChatMessage`, `RollUtility.processActivity`) enter the quick-roll pipeline, so module enable or chat re-render leaves pre-RSR history passive.
+- **Disabling "Enable Quick Roll for Activities" now actually stops activities from being quick-rolled.** The removed render-time stamping path had ignored the `enableActivityQuickRoll` setting, so newly used activities were still pulled into the quick-roll pipeline (and re-rolled on top of dnd5e's own rolls) even with the toggle off. Activity rendering now respects the setting consistently with every other quick-roll hook, matching the setting's documented behavior of falling back to the normal dnd5e dialog.
+
+### Removed
+- **`docs/upstream-v3.5.0-snapshot/`** — the vendored read-only copy of the upstream RSR v3.5.0 source. The upstream [`release-3.5.0` tag](https://github.com/MangoFVTT/fvtt-ready-set-roll-5e/releases/tag/release-3.5.0) serves the same reference/diffing purpose without bloating the repo, and the snapshot remains available in git history (last present at `f59b91e`). `README.md` and `docs/foundry-listing.html` now point at the upstream tag instead.
+
 ## [4.8.0] — 2026-06-03
 
 ### Added
